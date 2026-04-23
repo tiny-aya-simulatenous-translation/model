@@ -51,6 +51,12 @@ class TinyAyaBackbone(nn.Module):
         target_vocab = self.total_text_vocab + audio_vocab_size  # 264196
         self.model.resize_token_embeddings(target_vocab)
 
+        # Override HF's random init for new rows with mean of original embeddings
+        with torch.no_grad():
+            embed = self.model.get_input_embeddings().weight
+            old_mean = embed.data[:self.text_vocab_size].mean(dim=0)
+            embed.data[self.text_vocab_size:] = old_mean
+
         # Separate text embedding for summing with audio (Moshi-style)
         # Initialized from backbone's own embeddings -> warm start
         hidden = self.model.config.hidden_size
@@ -58,7 +64,8 @@ class TinyAyaBackbone(nn.Module):
         with torch.no_grad():
             src = self.model.get_input_embeddings().weight.data
             self.text_embed.weight.data[:self.text_vocab_size] = src[:self.text_vocab_size].clone()
-            # zero_padding token contributes nothing when summed
+            avg = self.text_embed.weight.data[:self.text_vocab_size].mean(dim=0)
+            self.text_embed.weight.data[self.text_vocab_size:] = avg
             self.text_embed.weight.data[self.ZERO_PADDING] = 0.0
 
         # Audio prediction heads — one per codebook, all 32

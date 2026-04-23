@@ -29,7 +29,7 @@ from src.data.collator import InterleavedCollator
 from src.data.dataset import StreamingTranslationDataset, TranslationDataset
 from src.model.backbone import TinyAyaBackbone
 from src.model.composite import TinyAyaMoshiComposite
-from src.model.lora_setup import apply_lora, register_embedding_grad_mask
+from src.model.lora_setup import apply_lora
 from src.training.checkpointing import load_checkpoint, prune_checkpoints, save_checkpoint
 from src.training.scheduler import WarmupCosineScheduler
 from src.training.translation_loss import compute_hierarchical_translation_loss
@@ -109,7 +109,6 @@ def get_param_groups(model, optim_cfg):
         "full_ft": {"params": [], "lr": optim_cfg["lr_full_ft"]},
         "projection": {"params": [], "lr": optim_cfg["lr_projection"]},
         "depth": {"params": [], "lr": optim_cfg["lr_depth"]},
-        "audio_embed": {"params": [], "lr": optim_cfg["lr_audio_embed"]},
         "text_embed": {"params": [], "lr": optim_cfg["lr_text_embed"]},
     }
     for name, param in model.named_parameters():
@@ -121,10 +120,8 @@ def get_param_groups(model, optim_cfg):
             groups["depth"]["params"].append(param)
         elif "text_embed" in name and "depth" not in name:
             groups["text_embed"]["params"].append(param)
-        elif "lora_" in name:
+        elif "lora_" in name or "lora_embedding" in name:
             groups["lora"]["params"].append(param)
-        elif "embed_tokens" in name:
-            groups["audio_embed"]["params"].append(param)
         elif any(f"layers.{i}." in name for i in range(34, 36)):
             groups["full_ft"]["params"].append(param)
         else:
@@ -342,7 +339,6 @@ def main():
         print("\n=== Building composite model ===")
     model = TinyAyaMoshiComposite(num_codebooks=num_codebooks)
     model.backbone = apply_lora(model.backbone, r=16)
-    register_embedding_grad_mask(model.backbone)
     freeze_depth_internals(model)
     for p in model.projection.parameters():
         p.requires_grad = True
