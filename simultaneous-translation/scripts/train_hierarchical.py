@@ -6,6 +6,8 @@ Dual-mode:
 
 Reads a YAML config (configs/stage2_scale.yaml) as the source of truth; every
 field stays overridable via CLI flags (additive argparse).
+
+Supports single-GPU and multi-GPU (DDP via torchrun) training.
 """
 
 import argparse
@@ -19,6 +21,7 @@ from pathlib import Path
 import soundfile as sf
 import torch
 import yaml
+from torch.utils.data.distributed import DistributedSampler
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -203,7 +206,7 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
 
 @torch.no_grad()
 def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
-                   loss_cfg) -> dict:
+                   loss_cfg, *, is_ddp=False) -> dict:
     model.eval()
     sums = {"loss": 0.0, "text": 0.0, "audio": 0.0}
     per_cb_sum = torch.zeros(num_codebooks, device=device)
@@ -241,6 +244,18 @@ def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
             cb0_correct += (pred[m] == target[m]).float().sum().item()
             cb0_total += m.float().sum().item()
         n += 1
+
+    # all-reduce across ranks so every rank sees identical metrics
+    if is_ddp:
+        for k in sums:
+            t = torch.tensor(sums[k], device=device)
+            torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
+            sums[k] = t.item()
+        torch.distributed.all_reduce(per_cb_sum, op=torch.distributed.ReduceOp.SUM)
+        t = torch.tensor([cb0_correct, cb0_total, n], device=device)
+        torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
+        cb0_correct, cb0_total, n = t.tolist()
+
     model.train()
     if n == 0:
         return {}
@@ -301,16 +316,30 @@ def main():
     overrides = {k: v for k, v in vars(args).items()
                  if k not in ("config", "dataset_mode", "data_dir", "resume")}
     cfg = load_config(args.config, overrides)
-    print("\n=== Effective config ===")
-    print(json.dumps(cfg, indent=2, default=str))
 
-    device = "cuda"
+    # ---- distributed init
+    local_rank = int(os.environ.get("LOCAL_RANK", 0))
+    world_size = int(os.environ.get("WORLD_SIZE", 1))
+    is_ddp = world_size > 1
+    if is_ddp:
+        torch.distributed.init_process_group(backend="nccl")
+        torch.cuda.set_device(local_rank)
+    device = f"cuda:{local_rank}"
+    is_main = (not is_ddp) or local_rank == 0
+
+    torch.manual_seed(42 + local_rank)
+
+    if is_main:
+        print("\n=== Effective config ===")
+        print(json.dumps(cfg, indent=2, default=str))
+
     num_codebooks = cfg["train"]["num_codebooks"]
     depth_chunk = cfg["train"]["depth_chunk_size"]
     max_frames = cfg["data"]["max_frames"]
 
     # ---- model
-    print("\n=== Building composite model ===")
+    if is_main:
+        print("\n=== Building composite model ===")
     model = TinyAyaMoshiComposite(num_codebooks=num_codebooks)
     model.backbone = apply_lora(model.backbone, r=16)
     register_embedding_grad_mask(model.backbone)
@@ -320,37 +349,55 @@ def main():
     model = model.to(device)
     model.backbone.gradient_checkpointing_enable()
 
-    total = sum(p.numel() for p in model.parameters())
-    trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Total {total/1e9:.2f}B, trainable {trainable/1e6:.0f}M "
-          f"({100*trainable/total:.1f}%)")
+    # ---- DDP wrap (after all surgery so requires_grad is final)
+    if is_ddp:
+        model = torch.nn.parallel.DistributedDataParallel(
+            model, device_ids=[local_rank], output_device=local_rank,
+            find_unused_parameters=True, broadcast_buffers=False,
+        )
+    unwrapped = model.module if is_ddp else model
+
+    total = sum(p.numel() for p in unwrapped.parameters())
+    trainable = sum(p.numel() for p in unwrapped.parameters() if p.requires_grad)
+    if is_main:
+        print(f"Total {total/1e9:.2f}B, trainable {trainable/1e6:.0f}M "
+              f"({100*trainable/total:.1f}%)")
 
     # ---- data
-    print("\n=== Datasets ===")
+    if is_main:
+        print("\n=== Datasets ===")
     collator = InterleavedCollator()
     if args.dataset_mode == "streaming":
         if not cfg["data"]["train_split"]:
             raise ValueError("train_split required in streaming mode")
         train_ds = StreamingTranslationDataset(
-            cfg["data"]["train_split"], model.backbone.tokenizer,
+            cfg["data"]["train_split"], unwrapped.backbone.tokenizer,
             max_frames=max_frames, audio_frame_rate=cfg["data"]["audio_frame_rate"],
             encoded_dir=cfg["data"]["encoded_dir"],
         )
         val_ds = None
         if cfg["data"]["val_split"] and Path(cfg["data"]["val_split"]).exists():
             val_ds = StreamingTranslationDataset(
-                cfg["data"]["val_split"], model.backbone.tokenizer,
+                cfg["data"]["val_split"], unwrapped.backbone.tokenizer,
                 max_frames=max_frames, audio_frame_rate=cfg["data"]["audio_frame_rate"],
                 encoded_dir=cfg["data"]["encoded_dir"],
             )
     else:
-        train_ds = TranslationDataset(args.data_dir, model.backbone.tokenizer,
+        train_ds = TranslationDataset(args.data_dir, unwrapped.backbone.tokenizer,
                                       max_frames=max_frames)
         val_ds = None
 
     num_workers = cfg["data"]["num_workers"]
+    if is_ddp:
+        num_workers = min(num_workers, 6)
+
+    train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True) if is_ddp else None
+    val_sampler = DistributedSampler(val_ds, shuffle=False, drop_last=False) if is_ddp and val_ds else None
+
     train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=cfg["train"]["batch_size"], shuffle=True,
+        train_ds, batch_size=cfg["train"]["batch_size"],
+        shuffle=(train_sampler is None),
+        sampler=train_sampler,
         collate_fn=collator, num_workers=num_workers,
         pin_memory=cfg["data"]["pin_memory"], persistent_workers=num_workers > 0,
     )
@@ -358,17 +405,19 @@ def main():
     if val_ds is not None:
         val_loader = torch.utils.data.DataLoader(
             val_ds, batch_size=cfg["train"]["batch_size"], shuffle=False,
+            sampler=val_sampler,
             collate_fn=collator, num_workers=num_workers,
             pin_memory=cfg["data"]["pin_memory"], persistent_workers=num_workers > 0,
         )
 
     # ---- mimi decoder for demos
-    print("\n=== Loading Mimi for audio monitoring ===")
+    if is_main:
+        print("\n=== Loading Mimi for audio monitoring ===")
     from src.data.mimi_encoder import MimiEncoder
     mimi_encoder = MimiEncoder(device=device)
 
     # ---- optimizer + scheduler
-    param_groups = get_param_groups(model, cfg["optim"])
+    param_groups = get_param_groups(unwrapped, cfg["optim"])
     optimizer = torch.optim.AdamW(
         param_groups, weight_decay=cfg["train"]["weight_decay"],
         betas=(cfg["train"]["adam_beta1"], cfg["train"]["adam_beta2"]),
@@ -382,12 +431,13 @@ def main():
 
     start_step = 0
     if args.resume:
-        start_step = load_checkpoint(model, optimizer, scheduler, args.resume)
-        print(f"Resumed at step {start_step}")
+        start_step = load_checkpoint(unwrapped, optimizer, scheduler, args.resume)
+        if is_main:
+            print(f"Resumed at step {start_step}")
 
     # ---- wandb
     use_wandb = cfg["logging"]["use_wandb"]
-    if use_wandb:
+    if use_wandb and is_main:
         import wandb
         wandb.init(project=cfg["logging"]["wandb_project"],
                    name=cfg["logging"]["wandb_run_name"],
@@ -397,6 +447,8 @@ def main():
     save_dir = Path(cfg["logging"]["save_dir"])
     save_dir.mkdir(parents=True, exist_ok=True)
 
+    if train_sampler is not None:
+        train_sampler.set_epoch(0)
     data_iter = iter(train_loader)
     running = {"loss": 0.0, "text": 0.0, "audio": 0.0, "per_cb": torch.zeros(num_codebooks)}
     t0 = time.time()
@@ -413,8 +465,9 @@ def main():
     text_w = cfg["loss"]["text_weight"]
     audio_w = cfg["loss"]["audio_weight"]
 
-    print(f"\n=== Training: {max_steps} steps, accum={grad_accum}, "
-          f"batch={cfg['train']['batch_size']} ===")
+    if is_main:
+        print(f"\n=== Training: {max_steps} steps, accum={grad_accum}, "
+              f"batch={cfg['train']['batch_size']} ===")
     model.train()
     optimizer.zero_grad()
 
@@ -425,30 +478,38 @@ def main():
         micro_audio = 0.0
         micro_per_cb = torch.zeros(num_codebooks)
         for micro in range(grad_accum):
-            try:
-                batch = next(data_iter)
-            except StopIteration:
-                data_iter = iter(train_loader)
-                batch = next(data_iter)
+            sync_ctx = (
+                contextlib.nullcontext()
+                if (not is_ddp or micro == grad_accum - 1)
+                else model.no_sync()
+            )
+            with sync_ctx:
+                try:
+                    batch = next(data_iter)
+                except StopIteration:
+                    if train_sampler is not None:
+                        train_sampler.set_epoch(step)
+                    data_iter = iter(train_loader)
+                    batch = next(data_iter)
 
-            text_ids = batch["text_ids"].to(device)
-            all_codes = batch["audio_codes"].to(device)
-            cb0 = all_codes[:, 0, :]
-            mask = batch["attention_mask"].to(device)
-            loss_mask = batch["loss_mask"].to(device)
+                text_ids = batch["text_ids"].to(device)
+                all_codes = batch["audio_codes"].to(device)
+                cb0 = all_codes[:, 0, :]
+                mask = batch["attention_mask"].to(device)
+                loss_mask = batch["loss_mask"].to(device)
 
-            with torch.amp.autocast("cuda", dtype=torch.bfloat16):
-                output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
-                               full_audio_codes=all_codes[:, :num_codebooks, :],
-                               depth_chunk_size=depth_chunk)
-                audio_targets = all_codes[:, :num_codebooks, :]
-                losses = compute_hierarchical_translation_loss(
-                    output["text_logits"], output["audio_logits"],
-                    text_ids, audio_targets, mask, loss_mask,
-                    text_weight=text_w, audio_weight=audio_w,
-                )
-            loss = losses["loss"] / grad_accum
-            loss.backward()
+                with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                    output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
+                                   full_audio_codes=all_codes[:, :num_codebooks, :],
+                                   depth_chunk_size=depth_chunk)
+                    audio_targets = all_codes[:, :num_codebooks, :]
+                    losses = compute_hierarchical_translation_loss(
+                        output["text_logits"], output["audio_logits"],
+                        text_ids, audio_targets, mask, loss_mask,
+                        text_weight=text_w, audio_weight=audio_w,
+                    )
+                loss = losses["loss"] / grad_accum
+                loss.backward()
             micro_loss_sum += losses["loss"].item()
             micro_text += losses["text_loss"].item()
             micro_audio += losses["audio_loss"].item()
@@ -482,11 +543,12 @@ def main():
                    if 'name' in g}
             peak_gb = torch.cuda.max_memory_allocated() / 1e9
             alloc_gb = torch.cuda.memory_allocated() / 1e9
-            print(f"step {step:6d} | loss {avg['loss']:.4f} | "
-                  f"text {avg['text']:.4f} audio {avg['audio']:.4f} | "
-                  f"grad {grad_norm:.3f} | {step_time:.2f}s/step | "
-                  f"peak {peak_gb:.1f}G")
-            if use_wandb:
+            if is_main:
+                print(f"step {step:6d} | loss {avg['loss']:.4f} | "
+                      f"text {avg['text']:.4f} audio {avg['audio']:.4f} | "
+                      f"grad {grad_norm:.3f} | {step_time:.2f}s/step | "
+                      f"peak {peak_gb:.1f}G")
+            if use_wandb and is_main:
                 import wandb
                 log = {
                     "train/loss": avg["loss"],
@@ -506,9 +568,9 @@ def main():
             torch.cuda.reset_peak_memory_stats()
 
         # ---- audio demo
-        if audio_every and step % audio_every == 0:
+        if audio_every and step % audio_every == 0 and is_main:
             try:
-                r = generate_audio_sample(model, train_ds, mimi_encoder, device,
+                r = generate_audio_sample(unwrapped, train_ds, mimi_encoder, device,
                                           num_codebooks, sample_idx=0,
                                           max_target_frames=80)
                 print(f"  demo cb0_acc={r['cb0_accuracy']*100:.1f}%")
@@ -530,42 +592,54 @@ def main():
 
         # ---- validation
         if val_loader is not None and val_every and step % val_every == 0:
-            print(f"  running validation at step {step}...")
+            if is_main:
+                print(f"  running validation at step {step}...")
             val = run_validation(model, val_loader, device, num_codebooks,
-                                 depth_chunk, cfg["loss"])
-            print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc']*100:.1f}%")
-            if use_wandb:
+                                 depth_chunk, cfg["loss"], is_ddp=is_ddp)
+            if is_main:
+                print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc']*100:.1f}%")
+            if use_wandb and is_main:
                 import wandb
                 log = {k: v for k, v in val.items() if k != "val/per_codebook_loss"}
                 for i, v in enumerate(val["val/per_codebook_loss"]):
                     log[f"val/per_codebook_loss_{i}"] = v
                 wandb.log(log, step=step)
-            if val["val/loss"] < best_val:
+            if is_main and val["val/loss"] < best_val:
                 best_val = val["val/loss"]
                 best_dir = save_dir / "best_by_val"
                 if best_dir.exists():
                     import shutil
                     shutil.rmtree(best_dir)
-                save_checkpoint(model, optimizer, scheduler, step, str(best_dir),
+                save_checkpoint(unwrapped, optimizer, scheduler, step, str(best_dir),
                                 extra_state={"best_val_loss": best_val,
                                              "config": cfg})
                 print(f"  * new best val — saved to {best_dir}")
+            if is_ddp:
+                torch.distributed.barrier()
 
         # ---- periodic save + prune
         if save_every and step % save_every == 0:
-            d = save_dir / f"step_{step:06d}"
-            save_checkpoint(model, optimizer, scheduler, step, str(d),
-                            extra_state={"config": cfg})
-            prune_checkpoints(str(save_dir), keep_last=5, keep_best="best_by_val")
+            if is_main:
+                d = save_dir / f"step_{step:06d}"
+                save_checkpoint(unwrapped, optimizer, scheduler, step, str(d),
+                                extra_state={"config": cfg})
+                prune_checkpoints(str(save_dir), keep_last=5, keep_best="best_by_val")
+            if is_ddp:
+                torch.distributed.barrier()
 
     # ---- final save
-    d = save_dir / f"step_{step:06d}"
-    save_checkpoint(model, optimizer, scheduler, step, str(d),
-                    extra_state={"config": cfg, "final": True})
-    print(f"\nTraining complete: {step} steps in {(time.time()-t0)/60:.1f} min")
-    if use_wandb:
+    if is_main:
+        d = save_dir / f"step_{step:06d}"
+        save_checkpoint(unwrapped, optimizer, scheduler, step, str(d),
+                        extra_state={"config": cfg, "final": True})
+        print(f"\nTraining complete: {step} steps in {(time.time()-t0)/60:.1f} min")
+    if use_wandb and is_main:
         import wandb
         wandb.finish()
+
+    if is_ddp:
+        torch.distributed.barrier()
+        torch.distributed.destroy_process_group()
 
 
 if __name__ == "__main__":
