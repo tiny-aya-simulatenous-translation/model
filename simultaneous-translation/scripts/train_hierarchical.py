@@ -30,7 +30,7 @@ from src.data.dataset import StreamingTranslationDataset, TranslationDataset
 from src.model.backbone import TinyAyaBackbone
 from src.model.composite import TinyAyaMoshiComposite
 from src.model.lora_setup import apply_lora
-from src.training.checkpointing import load_checkpoint, prune_checkpoints, save_checkpoint
+from src.training.checkpointing import load_checkpoint, prune_checkpoints, push_checkpoint_to_hub, save_checkpoint
 from src.training.scheduler import WarmupCosineScheduler
 from src.training.translation_loss import compute_hierarchical_translation_loss
 
@@ -55,7 +55,8 @@ DEFAULTS = {
                 "val_every": 1000, "save_dir": "checkpoints/stage2_scale",
                 "wandb_project": "tinyaya-s2s",
                 "wandb_run_name": "stage2_scale",
-                "use_wandb": False},
+                "use_wandb": False,
+                "push_to_hub": False, "hub_repo_id": None},
 }
 
 
@@ -304,6 +305,10 @@ def build_parser():
     p.add_argument("--use_wandb", type=lambda s: s.lower() in ("1", "true", "yes"),
                    default=None)
 
+    p.add_argument("--push_to_hub", type=lambda s: s.lower() in ("1", "true", "yes"),
+                   default=None)
+    p.add_argument("--hub_repo_id", type=str, default=None)
+
     p.add_argument("--resume", type=str, default=None, help="checkpoint dir to resume from")
     return p
 
@@ -438,6 +443,11 @@ def main():
         wandb.init(project=cfg["logging"]["wandb_project"],
                    name=cfg["logging"]["wandb_run_name"],
                    config=cfg)
+
+    # ---- hub push config
+    push_to_hub = cfg["logging"]["push_to_hub"] and is_main
+    hub_repo_id = cfg["logging"]["hub_repo_id"]
+    hub_token = os.environ.get("HF_TOKEN")
 
     # ---- training loop
     save_dir = Path(cfg["logging"]["save_dir"])
@@ -610,6 +620,13 @@ def main():
                                 extra_state={"best_val_loss": best_val,
                                              "config": cfg})
                 print(f"  * new best val — saved to {best_dir}")
+                if push_to_hub and hub_repo_id:
+                    try:
+                        push_checkpoint_to_hub(str(best_dir), hub_repo_id,
+                                               commit_message=f"best val {best_val:.4f} @ step {step}",
+                                               token=hub_token)
+                    except Exception as e:
+                        print(f"  hub push failed: {e}")
             if is_ddp:
                 torch.distributed.barrier()
 
@@ -620,6 +637,13 @@ def main():
                 save_checkpoint(unwrapped, optimizer, scheduler, step, str(d),
                                 extra_state={"config": cfg})
                 prune_checkpoints(str(save_dir), keep_last=5, keep_best="best_by_val")
+                if push_to_hub and hub_repo_id:
+                    try:
+                        push_checkpoint_to_hub(str(d), hub_repo_id,
+                                               commit_message=f"step {step}",
+                                               token=hub_token)
+                    except Exception as e:
+                        print(f"  hub push failed: {e}")
             if is_ddp:
                 torch.distributed.barrier()
 
@@ -629,6 +653,13 @@ def main():
         save_checkpoint(unwrapped, optimizer, scheduler, step, str(d),
                         extra_state={"config": cfg, "final": True})
         print(f"\nTraining complete: {step} steps in {(time.time()-t0)/60:.1f} min")
+        if push_to_hub and hub_repo_id:
+            try:
+                push_checkpoint_to_hub(str(d), hub_repo_id,
+                                       commit_message=f"final step {step}",
+                                       token=hub_token)
+            except Exception as e:
+                print(f"  hub push failed: {e}")
     if use_wandb and is_main:
         import wandb
         wandb.finish()

@@ -73,6 +73,30 @@ def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:
     return step
 
 
+def push_checkpoint_to_hub(local_dir: str, repo_id: str, commit_message: str = "checkpoint",
+                           token: str | None = None):
+    """Upload model weights (no optimizer/scheduler) to a HuggingFace Hub repo."""
+    from huggingface_hub import HfApi
+    api = HfApi(token=token)
+    api.create_repo(repo_id, repo_type="model", exist_ok=True, private=False)
+
+    skip = {"optimizer.pt", "scheduler.pt"}
+    for root, _dirs, files in os.walk(local_dir):
+        for fname in files:
+            if fname in skip:
+                continue
+            local_path = os.path.join(root, fname)
+            path_in_repo = os.path.relpath(local_path, local_dir)
+            api.upload_file(
+                path_or_fileobj=local_path,
+                path_in_repo=path_in_repo,
+                repo_id=repo_id,
+                repo_type="model",
+                commit_message=commit_message,
+            )
+    print(f"  pushed to https://huggingface.co/{repo_id}")
+
+
 def prune_checkpoints(save_dir: str, keep_last: int = 5, keep_best: str | None = "best_by_val"):
     """Delete all step_* checkpoints except the last `keep_last` by step, and the best."""
     save_dir = Path(save_dir)

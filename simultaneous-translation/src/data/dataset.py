@@ -197,9 +197,9 @@ class StreamingTranslationDataset(Dataset):
 
     def _resolve(self, p: str) -> Path:
         pp = Path(p)
-        if pp.is_absolute():
+        if pp.exists():
             return pp
-        if self.encoded_dir and not pp.exists():
+        if self.encoded_dir:
             cand = self.encoded_dir / pp.name
             if cand.exists():
                 return cand

@@ -1,9 +1,9 @@
 # Stage 2 — full-scale TR↔HI speech-to-speech translation
 # Mirrors tinyaya-moshi-backbone/configs/stage2.yaml; tuned for G4 ~97 GB.
 data:
-  train_split: data/splits/train.jsonl
-  val_split:   data/splits/val.jsonl
-  encoded_dir: data/encoded
+  train_split: /content/fleurs-tr-hi-mimi-encoded/splits/train.jsonl
+  val_split:   /content/fleurs-tr-hi-mimi-encoded/splits/val.jsonl
+  encoded_dir: /content/fleurs-tr-hi-mimi-encoded/encoded/encoded
   max_frames: 300              # ~24 s at 12.5 Hz; source+target combined
   audio_frame_rate: 12.5
   num_workers: 4
@@ -13,7 +13,7 @@ train:
   num_codebooks: 8
   batch_size: 2                # micro-batch
   grad_accum: 4                # effective batch = 8
-  max_steps: 20000
+  max_steps: 5000
   warmup_steps: 500
   min_lr_ratio: 0.1
   depth_chunk_size: 16
@@ -45,3 +45,5 @@ logging:
   wandb_project: tinyaya-s2s
   wandb_run_name: stage2_scale_9k
   use_wandb: true
+  push_to_hub: true
+  hub_repo_id: tiny-aya-translate/tinyaya-stage2-scale
