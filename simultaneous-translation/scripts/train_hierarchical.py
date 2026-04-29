@@ -25,6 +25,8 @@ from torch.utils.data.distributed import DistributedSampler
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.backend import get_backend
+
 from src.data.collator import InterleavedCollator
 from src.data.dataset import StreamingTranslationDataset, TranslationDataset
 from src.model.backbone import TinyAyaBackbone
@@ -40,6 +42,7 @@ from src.training.translation_loss import compute_hierarchical_translation_loss
 # ---------------------------------------------------------------------------
 
 DEFAULTS = {
+    "backend": "auto",
     "data": {"train_split": None, "val_split": None, "encoded_dir": None,
              "max_frames": 300, "audio_frame_rate": 12.5,
              "num_workers": 4, "pin_memory": True},
@@ -77,6 +80,9 @@ def load_config(path: str | None, overrides: dict) -> dict:
     # apply CLI overrides
     for k, v in overrides.items():
         if v is None:
+            continue
+        if k in cfg and not isinstance(cfg[k], dict):
+            cfg[k] = v
             continue
         for section in cfg:
             if k in cfg[section]:
@@ -142,7 +148,7 @@ def get_param_groups(model, optim_cfg):
 
 @torch.no_grad()
 def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
-                          sample_idx=0, max_target_frames=80):
+                          sample_idx=0, max_target_frames=80, backend=None):
     model.eval()
     sample = dataset[sample_idx]
     src_codes_all = sample["audio_codes"]
@@ -157,7 +163,8 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
     all_generated = []
     for _ in range(max_target_frames):
         mask = torch.ones(1, generated_cb0.shape[1], dtype=torch.long, device=device)
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        autocast = backend.autocast_context(dtype=torch.bfloat16) if backend else torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        with autocast:
             backbone_out = model.backbone(text_ids=text_ids, audio_codes=generated_cb0,
                                           attention_mask=mask)
             projected = model.projection(backbone_out["hidden_states"])
@@ -204,7 +211,7 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
 
 @torch.no_grad()
 def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
-                   loss_cfg, *, is_ddp=False) -> dict:
+                   loss_cfg, *, is_ddp=False, backend=None) -> dict:
     model.eval()
     sums = {"loss": 0.0, "text": 0.0, "audio": 0.0}
     per_cb_sum = torch.zeros(num_codebooks, device=device)
@@ -218,7 +225,8 @@ def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
         mask = batch["attention_mask"].to(device)
         loss_mask = batch["loss_mask"].to(device)
 
-        with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+        autocast = backend.autocast_context(dtype=torch.bfloat16) if backend else torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        with autocast:
             output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
                            full_audio_codes=all_codes[:, :num_codebooks, :],
                            depth_chunk_size=depth_chunk_size)
@@ -244,15 +252,17 @@ def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
         n += 1
 
     # all-reduce across ranks so every rank sees identical metrics
-    if is_ddp:
+    if backend and backend.world_size() > 1:
         for k in sums:
             t = torch.tensor(sums[k], device=device)
-            torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
+            t = backend.reduce_mean(t) * backend.world_size()  # reduce_mean then scale back to sum
             sums[k] = t.item()
-        torch.distributed.all_reduce(per_cb_sum, op=torch.distributed.ReduceOp.SUM)
-        t = torch.tensor([cb0_correct, cb0_total, n], device=device)
-        torch.distributed.all_reduce(t, op=torch.distributed.ReduceOp.SUM)
+        # For per_cb_sum and counts, use the same pattern
+        t = torch.tensor([cb0_correct, cb0_total, float(n)], device=device)
+        t = backend.reduce_mean(t) * backend.world_size()
         cb0_correct, cb0_total, n = t.tolist()
+        per_cb_sum_t = backend.reduce_mean(per_cb_sum) * backend.world_size()
+        per_cb_sum = per_cb_sum_t
 
     model.train()
     if n == 0:
@@ -309,6 +319,7 @@ def build_parser():
                    default=None)
     p.add_argument("--hub_repo_id", type=str, default=None)
 
+    p.add_argument("--backend", type=str, default=None, choices=["auto", "gpu", "tpu"])
     p.add_argument("--resume", type=str, default=None, help="checkpoint dir to resume from")
     return p
 
@@ -319,17 +330,16 @@ def main():
                  if k not in ("config", "dataset_mode", "data_dir", "resume")}
     cfg = load_config(args.config, overrides)
 
-    # ---- distributed init
-    local_rank = int(os.environ.get("LOCAL_RANK", 0))
-    world_size = int(os.environ.get("WORLD_SIZE", 1))
-    is_ddp = world_size > 1
-    if is_ddp:
-        torch.distributed.init_process_group(backend="nccl")
-        torch.cuda.set_device(local_rank)
-    device = f"cuda:{local_rank}"
-    is_main = (not is_ddp) or local_rank == 0
+    # ---- distributed init (GPU or TPU)
+    backend_type = cfg.get("backend", "auto")
+    if backend_type == "auto":
+        backend_type = None  # auto-detect
+    backend = get_backend(backend_type)
+    backend.init_distributed()
+    device = backend.get_device()
+    is_main = backend.is_main_process()
 
-    torch.manual_seed(42 + local_rank)
+    torch.manual_seed(42 + int(os.environ.get("LOCAL_RANK", 0)))
 
     if is_main:
         print("\n=== Effective config ===")
@@ -348,15 +358,13 @@ def main():
     for p in model.projection.parameters():
         p.requires_grad = True
     model = model.to(device)
-    model.backbone.gradient_checkpointing_enable()
 
-    # ---- DDP wrap (after all surgery so requires_grad is final)
-    if is_ddp:
-        model = torch.nn.parallel.DistributedDataParallel(
-            model, device_ids=[local_rank], output_device=local_rank,
-            find_unused_parameters=True, broadcast_buffers=False,
-        )
-    unwrapped = model.module if is_ddp else model
+    # Gradient checkpointing: for TPU, wrap_model enables it before FSDPv2 (required order)
+    # For GPU, enable it here before DDP
+    if cfg.get("backend", "auto") != "tpu":
+        model.backbone.gradient_checkpointing_enable()
+    model = backend.wrap_model(model)
+    unwrapped = model.module if hasattr(model, "module") else model
 
     total = sum(p.numel() for p in unwrapped.parameters())
     trainable = sum(p.numel() for p in unwrapped.parameters() if p.requires_grad)
@@ -389,18 +397,28 @@ def main():
         val_ds = None
 
     num_workers = cfg["data"]["num_workers"]
-    if is_ddp:
+    is_tpu = cfg.get("backend", "auto") == "tpu"
+    if backend.world_size() > 1 and not is_tpu:
         num_workers = min(num_workers, 6)
 
-    train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True) if is_ddp else None
-    val_sampler = DistributedSampler(val_ds, shuffle=False, drop_last=False) if is_ddp and val_ds else None
+    if is_tpu:
+        # SPMD is single-process -- no distributed sampler
+        train_sampler = None
+        val_sampler = None
+    elif backend.world_size() > 1:
+        train_sampler = DistributedSampler(train_ds, shuffle=True, drop_last=True)
+        val_sampler = DistributedSampler(val_ds, shuffle=False, drop_last=False) if val_ds else None
+    else:
+        train_sampler = None
+        val_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
         train_ds, batch_size=cfg["train"]["batch_size"],
         shuffle=(train_sampler is None),
         sampler=train_sampler,
         collate_fn=collator, num_workers=num_workers,
-        pin_memory=cfg["data"]["pin_memory"], persistent_workers=num_workers > 0,
+        pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
+        persistent_workers=num_workers > 0 and not is_tpu,
     )
     val_loader = None
     if val_ds is not None:
@@ -408,14 +426,16 @@ def main():
             val_ds, batch_size=cfg["train"]["batch_size"], shuffle=False,
             sampler=val_sampler,
             collate_fn=collator, num_workers=num_workers,
-            pin_memory=cfg["data"]["pin_memory"], persistent_workers=num_workers > 0,
+            pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
+            persistent_workers=num_workers > 0 and not is_tpu,
         )
 
     # ---- mimi decoder for demos
     if is_main:
         print("\n=== Loading Mimi for audio monitoring ===")
     from src.data.mimi_encoder import MimiEncoder
-    mimi_encoder = MimiEncoder(device=device)
+    mimi_device = "cpu" if is_tpu else device
+    mimi_encoder = MimiEncoder(device=mimi_device)
 
     # ---- optimizer + scheduler
     param_groups = get_param_groups(unwrapped, cfg["optim"])
@@ -430,9 +450,13 @@ def main():
         min_lr_ratio=cfg["train"]["min_lr_ratio"],
     )
 
+    from src.training.checkpointing import find_latest_checkpoint, load_checkpoint_with_backend
     start_step = 0
-    if args.resume:
-        start_step = load_checkpoint(unwrapped, optimizer, scheduler, args.resume)
+    resume_dir = args.resume
+    if resume_dir == "auto":
+        resume_dir = find_latest_checkpoint(cfg["logging"]["save_dir"])
+    if resume_dir:
+        start_step = load_checkpoint_with_backend(unwrapped, optimizer, scheduler, resume_dir, backend)
         if is_main:
             print(f"Resumed at step {start_step}")
 
@@ -486,8 +510,8 @@ def main():
         for micro in range(grad_accum):
             sync_ctx = (
                 contextlib.nullcontext()
-                if (not is_ddp or micro == grad_accum - 1)
-                else model.no_sync()
+                if micro == grad_accum - 1
+                else backend.no_sync(model)
             )
             with sync_ctx:
                 try:
@@ -504,7 +528,14 @@ def main():
                 mask = batch["attention_mask"].to(device)
                 loss_mask = batch["loss_mask"].to(device)
 
-                with torch.amp.autocast("cuda", dtype=torch.bfloat16):
+                # Mark input sharding for TPU SPMD
+                if hasattr(backend, "mark_sharding"):
+                    backend.mark_sharding(text_ids, ("fsdp", None))
+                    backend.mark_sharding(all_codes, ("fsdp", None, None))
+                    backend.mark_sharding(mask, ("fsdp", None))
+                    backend.mark_sharding(loss_mask, ("fsdp", None))
+
+                with backend.autocast_context(dtype=torch.bfloat16):
                     output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
                                    full_audio_codes=all_codes[:, :num_codebooks, :],
                                    depth_chunk_size=depth_chunk)
@@ -528,7 +559,7 @@ def main():
             print(f"!!! Non-finite loss at step {step}. Aborting.")
             sys.exit(2)
 
-        optimizer.step()
+        backend.optimizer_step(optimizer)
         scheduler.step(step + 1)
         optimizer.zero_grad()
         step += 1
@@ -547,8 +578,9 @@ def main():
             t_last = now
             lrs = {f"train/lr_{g['name']}": g['lr'] for g in optimizer.param_groups
                    if 'name' in g}
-            peak_gb = torch.cuda.max_memory_allocated() / 1e9
-            alloc_gb = torch.cuda.memory_allocated() / 1e9
+            mem_info = backend.get_memory_info()
+            peak_gb = mem_info["max_allocated_gb"] if mem_info else 0
+            alloc_gb = mem_info["allocated_gb"] if mem_info else 0
             if is_main:
                 print(f"step {step:6d} | loss {avg['loss']:.4f} | "
                       f"text {avg['text']:.4f} audio {avg['audio']:.4f} | "
@@ -571,14 +603,16 @@ def main():
                 wandb.log(log, step=step)
             running = {"loss": 0.0, "text": 0.0, "audio": 0.0,
                        "per_cb": torch.zeros(num_codebooks)}
-            torch.cuda.reset_peak_memory_stats()
+            if mem_info:
+                torch.cuda.reset_peak_memory_stats()
+            backend.sync()
 
         # ---- audio demo
         if audio_every and step % audio_every == 0 and is_main:
             try:
                 r = generate_audio_sample(unwrapped, train_ds, mimi_encoder, device,
                                           num_codebooks, sample_idx=0,
-                                          max_target_frames=80)
+                                          max_target_frames=80, backend=backend)
                 print(f"  demo cb0_acc={r['cb0_accuracy']*100:.1f}%")
                 ad = save_dir / "audio_samples" / f"step_{step:06d}"
                 ad.mkdir(parents=True, exist_ok=True)
@@ -601,7 +635,7 @@ def main():
             if is_main:
                 print(f"  running validation at step {step}...")
             val = run_validation(model, val_loader, device, num_codebooks,
-                                 depth_chunk, cfg["loss"], is_ddp=is_ddp)
+                                 depth_chunk, cfg["loss"], is_ddp=False, backend=backend)
             if is_main:
                 print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc']*100:.1f}%")
             if use_wandb and is_main:
@@ -627,8 +661,7 @@ def main():
                                                token=hub_token)
                     except Exception as e:
                         print(f"  hub push failed: {e}")
-            if is_ddp:
-                torch.distributed.barrier()
+            backend.barrier()
 
         # ---- periodic save + prune
         if save_every and step % save_every == 0:
@@ -644,8 +677,7 @@ def main():
                                                token=hub_token)
                     except Exception as e:
                         print(f"  hub push failed: {e}")
-            if is_ddp:
-                torch.distributed.barrier()
+            backend.barrier()
 
     # ---- final save
     if is_main:
@@ -664,9 +696,7 @@ def main():
         import wandb
         wandb.finish()
 
-    if is_ddp:
-        torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
+    backend.barrier()
 
 
 if __name__ == "__main__":
