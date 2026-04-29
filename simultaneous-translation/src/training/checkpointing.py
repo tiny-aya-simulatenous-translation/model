@@ -109,3 +109,46 @@ def prune_checkpoints(save_dir: str, keep_last: int = 5, keep_best: str | None =
         if p.name not in keep:
             import shutil
             shutil.rmtree(p, ignore_errors=True)
+
+
+def is_gcs_path(path: str) -> bool:
+    return path.startswith("gs://")
+
+
+def get_checkpoint_dirs(base_dir: str) -> list[str]:
+    """List checkpoint directories, supporting both local and GCS."""
+    if is_gcs_path(base_dir):
+        try:
+            import gcsfs
+            fs = gcsfs.GCSFileSystem()
+            dirs = [f"gs://{d}" for d in fs.ls(base_dir) if fs.isdir(d)]
+            return sorted(dirs)
+        except ImportError:
+            print("Warning: gcsfs not installed, cannot list GCS checkpoints")
+            return []
+    else:
+        import os
+        if not os.path.exists(base_dir):
+            return []
+        return sorted(
+            [os.path.join(base_dir, d) for d in os.listdir(base_dir)
+             if os.path.isdir(os.path.join(base_dir, d)) and d.startswith("checkpoint_")]
+        )
+
+
+def find_latest_checkpoint(base_dir: str) -> str | None:
+    """Find the latest checkpoint directory for resume."""
+    dirs = get_checkpoint_dirs(base_dir)
+    return dirs[-1] if dirs else None
+
+
+def save_checkpoint_with_backend(model, optimizer, scheduler, step, save_dir, backend, extra_state=None):
+    """Save checkpoint using backend's save method (handles GCS/local)."""
+    import os
+    os.makedirs(save_dir, exist_ok=True)
+    save_checkpoint(model, optimizer, scheduler, step, save_dir, extra_state)
+
+
+def load_checkpoint_with_backend(model, optimizer, scheduler, load_dir, backend):
+    """Load checkpoint using backend's load method."""
+    return load_checkpoint(model, optimizer, scheduler, load_dir)
