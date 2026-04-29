@@ -68,6 +68,8 @@ class GPUBackend(BackendBase):
         return tensor
 
     def autocast_context(self, dtype=torch.bfloat16):
+        if not torch.cuda.is_available():
+            return torch.amp.autocast("cpu", dtype=dtype)
         return torch.amp.autocast("cuda", dtype=dtype)
 
     def no_sync(self, model: nn.Module):
