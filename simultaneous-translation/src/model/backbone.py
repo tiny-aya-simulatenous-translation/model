@@ -102,11 +102,14 @@ class TinyAyaBackbone(nn.Module):
         combined = audio_embeds + text_embeds
 
         # Backbone transformer
+        # use_cache=False required for XLA/TPU compatibility --
+        # Cohere2's sliding window cache uses negative indexing that XLA can't handle
         outputs = self.model(
             inputs_embeds=combined,
             attention_mask=attention_mask,
             output_hidden_states=True,
             return_dict=True,
+            use_cache=False,
         )
         hidden_states = outputs.hidden_states[-1]
 
