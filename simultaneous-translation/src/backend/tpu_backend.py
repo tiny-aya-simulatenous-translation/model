@@ -56,7 +56,7 @@ class TPUBackend(BackendBase):
         if hasattr(model, "backbone") and hasattr(model.backbone, "model"):
             model.backbone.model.gradient_checkpointing_enable()
 
-        model = FSDPv2(model, self._mesh)
+        model = FSDPv2(model, mesh=self._mesh)
         return model
 
     def optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
