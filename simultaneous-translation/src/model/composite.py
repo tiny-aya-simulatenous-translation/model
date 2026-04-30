@@ -13,6 +13,17 @@ import torch
 import torch.nn as nn
 import torch.utils.checkpoint as cp
 
+# XLA-compatible gradient checkpointing
+def _checkpoint(fn, *args, use_reentrant=False):
+    """Gradient checkpoint that works on both GPU (torch) and TPU (XLA)."""
+    try:
+        return cp.checkpoint(fn, *args, use_reentrant=use_reentrant)
+    except AttributeError:
+        # torch.utils.checkpoint fails on XLA -- fall back to direct call
+        # (gradient checkpointing for XLA is handled at the model level
+        # via model.gradient_checkpointing_enable() before FSDPv2 wrapping)
+        return fn(*args)
+
 from .backbone import TinyAyaBackbone
 from .surgery import extract_depth_decoder_state_dict, create_projection
 from .depth_decoder import create_depth_decoder
@@ -129,7 +140,7 @@ class TinyAyaMoshiComposite(nn.Module):
                 depth_input[:, 1:] = audio_flat[:, :self.num_codebooks - 1]
 
             # Checkpointed depth forward
-            chunk_logits_flat = cp.checkpoint(
+            chunk_logits_flat = _checkpoint(
                 _depth_forward,
                 depth_input,
                 ctx_expanded,
