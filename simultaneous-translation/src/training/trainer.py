@@ -86,9 +86,10 @@ class Trainer:
                     audio_codes=audio_codes_cb0,
                     attention_mask=attention_mask,
                 )
+                text_logits, audio_logits, _ = output
                 losses = compute_interleaved_loss(
-                    text_logits=output["text_logits"],
-                    audio_logits=output["audio_logits"],
+                    text_logits=text_logits,
+                    audio_logits=audio_logits,
                     text_targets=text_ids,
                     audio_targets=all_audio_codes,
                     attention_mask=attention_mask,

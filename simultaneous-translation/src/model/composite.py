@@ -70,8 +70,11 @@ class TinyAyaMoshiComposite(nn.Module):
         attention_mask: torch.Tensor | None = None,
         full_audio_codes: torch.LongTensor | None = None,
         depth_chunk_size: int = 16,
-    ) -> dict[str, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass with depth decoder for hierarchical codebook generation.
+
+        Returns:
+            (text_logits, audio_logits, hidden_states) — tuple for FSDPv2 compat.
 
         Args:
             text_ids: [B, T] text token IDs
@@ -156,8 +159,4 @@ class TinyAyaMoshiComposite(nn.Module):
         # [B, T, num_codebooks, 2048] -> [B, num_codebooks, T, 2048]
         audio_logits = torch.cat(audio_logits_chunks, dim=1).permute(0, 2, 1, 3)
 
-        return {
-            "text_logits": text_logits,
-            "audio_logits": audio_logits,  # [B, num_codebooks, T, 2048]
-            "hidden_states": hidden_states,
-        }
+        return (text_logits, audio_logits, hidden_states)

@@ -68,3 +68,12 @@ class BackendBase(ABC):
     @abstractmethod
     def sync(self) -> None:
         """Trigger execution/compilation (needed for lazy backends like XLA)."""
+
+    def diagnose(self, tag: str = "diagnose") -> None:
+        """Optional hardware-utilization diagnostic. No-op for backends that
+        don't implement it."""
+        return None
+
+    def mark_sharding(self, tensor: torch.Tensor, partition_spec: tuple) -> None:
+        """Optional SPMD sharding hint. No-op outside TPU SPMD."""
+        return None

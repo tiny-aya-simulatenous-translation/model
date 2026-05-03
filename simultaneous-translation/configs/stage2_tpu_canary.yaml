@@ -11,19 +11,24 @@ data:
   encoded_dir: /mnt/data/encoded
   train_split: /mnt/data/splits/train.jsonl
   val_split: /mnt/data/splits/val.jsonl
-  max_frames: 300
+  # Canary uses short sequences (64 frames = ~5 seconds @ 12.5 fps) so XLA
+  # compile finishes in minutes instead of hours. Full run scales this up.
+  max_frames: 64
   audio_frame_rate: 12.5
   num_workers: 4
   pin_memory: false
 
 train:
   num_codebooks: 8
-  batch_size: 2
+  batch_size: 1
   grad_accum: 2
-  # Effective batch = batch_size * grad_accum * num_chips = 2 * 2 * 32 = 128
+  # Effective batch = batch_size * grad_accum * num_chips = 1 * 2 * 16 = 32
   max_steps: 200
   warmup_steps: 50
-  depth_chunk_size: 16
+  # Canary: depth_chunk_size = max_frames = 64 -> single chunk, no Python loop.
+  # XLA compiles a single depth_decoder forward instead of 8 unrolled copies,
+  # cutting compile time roughly 8x.
+  depth_chunk_size: 64
   precision: bfloat16
 
 loss:
@@ -32,19 +37,21 @@ loss:
 
 optim:
   lr_lora: 1.5e-4
-  lr_full_ft: 5e-5
-  lr_projection: 5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
   lr_depth: 2.5e-4
-  lr_audio_embed: 5e-4
-  lr_text_embed: 5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
 
 logging:
   log_every: 10
-  save_every: 50      # exercise xm.save -> GCS path 3-4 times
+  save_every: 50      # exercise xm.save 3-4 times
   audio_every: 100    # exercise Mimi decoding for audio sample once
   val_every: 100      # exercise validation loop once
-  save_dir: gs://tinyaya-stage2-tpu/checkpoints/canary
+  # Local path: GCS save isn't yet wired through save_checkpoint (uses os.makedirs).
+  # Canary validates the training loop; GCS upload can run as a post-step.
+  save_dir: /mnt/data/checkpoints/canary
   keep_last_n: 3
   use_wandb: true
   wandb_project: tinyaya-stage2-tpu
-  wandb_run_name: v4-64-canary
+  wandb_run_name: v5e-canary

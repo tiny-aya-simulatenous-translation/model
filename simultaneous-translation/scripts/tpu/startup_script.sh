@@ -39,12 +39,27 @@ read_meta() {
 CONFIG_FILE="$(read_meta config-file configs/stage2_tpu.yaml)"
 # Optional GCS overlay path (see OVERLAY_GS_URI section below).
 OVERLAY_GS_URI="$(read_meta overlay-gs-uri '')"
+# Optional full-repo tarball in GCS. When set, replaces the `git clone` step
+# entirely (private repo without GitHub credentials on the VM).
+REPO_TARBALL_GS_URI="$(read_meta repo-tarball-gs-uri '')"
+# Sharding strategy passed through to TPUBackend. See src/backend/tpu_backend.py
+# for the full list (replicated / fsdpv2 / fsdpv2_lora / auto).
+TPU_STRATEGY_META="$(read_meta tpu-strategy auto)"
+# When set to 1, run scripts/tpu/probe_strategies.py before the real training
+# and dump results to /tmp/probe-results.json. Useful for canary runs to pick
+# the optimal strategy.
+PROBE_FIRST="$(read_meta probe-first 0)"
 echo "[startup] CONFIG_FILE=$CONFIG_FILE"
 echo "[startup] OVERLAY_GS_URI=${OVERLAY_GS_URI:-<unset>}"
+echo "[startup] REPO_TARBALL_GS_URI=${REPO_TARBALL_GS_URI:-<unset>}"
+echo "[startup] TPU_STRATEGY=$TPU_STRATEGY_META PROBE_FIRST=$PROBE_FIRST"
 
 # ----- 1. system deps -----
-sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
+# Dpkg::Lock::Timeout=600 lets apt wait for unattended-upgrades (which
+# routinely holds the dpkg lock right after first boot) instead of failing.
+APT_OPTS=(-o Dpkg::Lock::Timeout=600)
+sudo DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTS[@]}" update -qq
+sudo DEBIAN_FRONTEND=noninteractive apt-get "${APT_OPTS[@]}" install -y -qq \
     tmux git curl ca-certificates build-essential
 
 # ----- 2. uv (with pip fallback if astral.sh is unreachable) -----
@@ -59,16 +74,26 @@ fi
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 uv --version
 
-# ----- 3. clone / update repo -----
+# ----- 3. fetch repo: tarball-from-GCS (preferred for private repos) or git clone -----
 sudo mkdir -p "$(dirname "$REPO_DIR")"
 sudo chown "$USER:$USER" "$(dirname "$REPO_DIR")"
-if [ ! -d "$REPO_DIR/.git" ]; then
-    git clone "$REPO_URL" "$REPO_DIR"
+if [ -n "$REPO_TARBALL_GS_URI" ]; then
+    echo "[startup] fetching repo tarball from $REPO_TARBALL_GS_URI"
+    sudo rm -rf "$REPO_DIR"
+    sudo mkdir -p "$REPO_DIR"
+    sudo chown "$USER:$USER" "$REPO_DIR"
+    gcloud storage cp "$REPO_TARBALL_GS_URI" /tmp/repo.tar.gz
+    tar -xzf /tmp/repo.tar.gz -C "$REPO_DIR"
+    rm -f /tmp/repo.tar.gz
+else
+    if [ ! -d "$REPO_DIR/.git" ]; then
+        git clone "$REPO_URL" "$REPO_DIR"
+    fi
+    cd "$REPO_DIR"
+    git fetch --all --prune
+    git checkout "$REPO_BRANCH"
+    git pull --ff-only
 fi
-cd "$REPO_DIR"
-git fetch --all --prune
-git checkout "$REPO_BRANCH"
-git pull --ff-only
 
 cd "$REPO_DIR/simultaneous-translation"
 
@@ -95,22 +120,43 @@ if WANDB_API_KEY="$(gcloud secrets versions access latest --secret="$SECRET_WAND
 fi
 
 # ----- 6. dataset to /mnt/data (resumable) -----
+# We deliberately do NOT set HF_HUB_ENABLE_HF_TRANSFER here: hf_transfer isn't
+# pinned in the lockfile, and the speedup isn't material for FLEURS.
 sudo mkdir -p "$DATA_DIR"
 sudo chown "$USER:$USER" "$DATA_DIR"
-HF_HUB_ENABLE_HF_TRANSFER=1 \
 uv run huggingface-cli download "$HF_DATASET" \
     --repo-type dataset \
-    --local-dir "$DATA_DIR" \
-    --resume-download
+    --local-dir "$DATA_DIR"
 
 # ----- 7. launch training with auto-restart in tmux -----
+# torch_xla's _XLAC.so dynamically links libpython3.12.so.1.0, which uv keeps
+# inside its managed-Python directory rather than on the standard linker path.
+LIBPYTHON_DIR="$(dirname "$(find "$HOME/.local/share/uv/python" -name 'libpython3.12.so.1.0' -type f 2>/dev/null | head -1)")"
+echo "[startup] LIBPYTHON_DIR=$LIBPYTHON_DIR"
+
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
+# Optional pre-flight probe of sharding strategies on the live mesh.
+if [ "$PROBE_FIRST" = "1" ]; then
+    echo "[startup] running probe_strategies.py before training"
+    DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
+    XLA_DISABLE_FUNCTIONALIZATION=0 \
+    LD_LIBRARY_PATH="$LIBPYTHON_DIR:${LD_LIBRARY_PATH:-}" \
+    uv run python scripts/tpu/probe_strategies.py \
+        --strategies replicated fsdpv2_lora fsdpv2 \
+        --steps 5 --hidden 1024 \
+        --out /tmp/probe-results.json \
+        2>&1 | tee /tmp/probe.log || echo "[startup] probe failed (non-fatal, continuing)"
+fi
+
 tmux new-session -d -s "$TMUX_SESSION" "
     set -euo pipefail
     cd '$REPO_DIR/simultaneous-translation'
     while true; do
         echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
         DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
+        XLA_DISABLE_FUNCTIONALIZATION=0 \
+        TPU_STRATEGY='$TPU_STRATEGY_META' \
+        LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
         HF_TOKEN='$HF_TOKEN' \
         WANDB_API_KEY='${WANDB_API_KEY:-}' \
         uv run python scripts/train_hierarchical.py \

@@ -93,8 +93,12 @@ gcloud beta services identity create --service=tpu.googleapis.com --project="$PR
 
 PROJECT_NUM="$(gcloud projects describe "$PROJECT_ID" --format='value(projectNumber)')"
 TPU_SA="service-${PROJECT_NUM}@cloud-tpu.iam.gserviceaccount.com"
+# The TPU VM itself runs as the project's default Compute Engine service
+# account, which is what the startup script uses for `gcloud secrets ...`
+# and `gcloud storage ...` calls.
+VM_SA="${PROJECT_NUM}-compute@developer.gserviceaccount.com"
 
-echo "==> granting IAM to TPU service account: $TPU_SA"
+echo "==> granting IAM to TPU service identity: $TPU_SA"
 gcloud projects add-iam-policy-binding "$PROJECT_ID" \
     --member="serviceAccount:$TPU_SA" \
     --role="roles/secretmanager.secretAccessor" \
@@ -102,6 +106,19 @@ gcloud projects add-iam-policy-binding "$PROJECT_ID" \
 
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
     --member="serviceAccount:$TPU_SA" \
+    --role="roles/storage.objectAdmin" >/dev/null
+
+echo "==> granting IAM to default Compute Engine SA (used by the TPU VM): $VM_SA"
+for sec in "$SECRET_HF" "$SECRET_WANDB"; do
+    if gcloud secrets describe "$sec" >/dev/null 2>&1; then
+        gcloud secrets add-iam-policy-binding "$sec" \
+            --project="$PROJECT_ID" \
+            --member="serviceAccount:$VM_SA" \
+            --role="roles/secretmanager.secretAccessor" >/dev/null
+    fi
+done
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+    --member="serviceAccount:$VM_SA" \
     --role="roles/storage.objectAdmin" >/dev/null
 
 echo "==> done. Next: bash scripts/tpu/launch_qr.sh"

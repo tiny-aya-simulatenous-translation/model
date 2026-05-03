@@ -29,11 +29,11 @@ loss:
 
 optim:
   lr_lora: 1.5e-4
-  lr_full_ft: 5e-5
-  lr_projection: 5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
   lr_depth: 2.5e-4
-  lr_audio_embed: 5e-4
-  lr_text_embed: 5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
 
 logging:
   log_every: 20

@@ -230,9 +230,10 @@ def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
             output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
                            full_audio_codes=all_codes[:, :num_codebooks, :],
                            depth_chunk_size=depth_chunk_size)
+            text_logits, audio_logits, _ = output
             audio_targets = all_codes[:, :num_codebooks, :]
             losses = compute_hierarchical_translation_loss(
-                output["text_logits"], output["audio_logits"],
+                text_logits, audio_logits,
                 text_ids, audio_targets, mask, loss_mask,
                 text_weight=loss_cfg["text_weight"],
                 audio_weight=loss_cfg["audio_weight"],
@@ -243,7 +244,7 @@ def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
         per_cb_sum += losses["per_codebook_loss"]
 
         # cb0 teacher-forced acc on target positions (shifted next-token)
-        pred = output["audio_logits"][:, 0, :-1].argmax(dim=-1)  # [B, T-1]
+        pred = audio_logits[:, 0, :-1].argmax(dim=-1)  # [B, T-1]
         target = all_codes[:, 0, 1:]
         m = loss_mask[:, 1:].bool() & mask[:, 1:].bool()
         if m.any():
@@ -364,6 +365,8 @@ def main():
     if cfg.get("backend", "auto") != "tpu":
         model.backbone.gradient_checkpointing_enable()
     model = backend.wrap_model(model)
+    if hasattr(backend, "diagnose"):
+        backend.diagnose("post-wrap")
     unwrapped = model.module if hasattr(model, "module") else model
 
     total = sum(p.numel() for p in unwrapped.parameters())
@@ -539,9 +542,10 @@ def main():
                     output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
                                    full_audio_codes=all_codes[:, :num_codebooks, :],
                                    depth_chunk_size=depth_chunk)
+                    text_logits, audio_logits, _ = output
                     audio_targets = all_codes[:, :num_codebooks, :]
                     losses = compute_hierarchical_translation_loss(
-                        output["text_logits"], output["audio_logits"],
+                        text_logits, audio_logits,
                         text_ids, audio_targets, mask, loss_mask,
                         text_weight=text_w, audio_weight=audio_w,
                     )
@@ -563,6 +567,9 @@ def main():
         scheduler.step(step + 1)
         optimizer.zero_grad()
         step += 1
+        if step in (1, 2, 5, 10, 25, 50):
+            if hasattr(backend, "diagnose"):
+                backend.diagnose(f"step={step}")
 
         running["loss"] += micro_loss_sum / grad_accum
         running["text"] += micro_text / grad_accum

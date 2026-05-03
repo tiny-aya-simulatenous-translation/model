@@ -28,6 +28,15 @@ RUNTIME="${RUNTIME:-tpu-ubuntu2204-base}"
 CONFIG_FILE="${CONFIG_FILE:-configs/stage2_tpu.yaml}"
 # SPOT=1  -> request preemptible (spot) capacity. Default empty = on-demand.
 SPOT="${SPOT:-}"
+# Optional GCS path to a full-repo tarball, used by startup_script when the
+# repo is private and the VM has no GitHub credentials.
+REPO_TARBALL_GS_URI="${REPO_TARBALL_GS_URI:-}"
+# Sharding strategy: replicated | fsdpv2 | fsdpv2_lora | auto. See
+# src/backend/tpu_backend.py for semantics.
+TPU_STRATEGY="${TPU_STRATEGY:-auto}"
+# When set to 1, runs probe_strategies.py before the real training to
+# benchmark each strategy on the live mesh first.
+PROBE_FIRST="${PROBE_FIRST:-0}"
 
 STARTUP_SCRIPT="$SCRIPT_DIR/startup_script.sh"
 
@@ -44,6 +53,11 @@ else
     tier="on-demand"
 fi
 
+metadata_pairs="config-file=$CONFIG_FILE,tpu-strategy=$TPU_STRATEGY,probe-first=$PROBE_FIRST"
+if [ -n "$REPO_TARBALL_GS_URI" ]; then
+    metadata_pairs+=",repo-tarball-gs-uri=$REPO_TARBALL_GS_URI"
+fi
+
 echo "==> creating Queued Resource"
 echo "    project:        $PROJECT_ID"
 echo "    zone:           $ZONE"
@@ -54,6 +68,9 @@ echo "    runtime:        $RUNTIME"
 echo "    tier:           $tier"
 echo "    startup script: $STARTUP_SCRIPT"
 echo "    config file:    $CONFIG_FILE"
+echo "    repo tarball:   ${REPO_TARBALL_GS_URI:-<unset, will git clone>}"
+echo "    tpu strategy:   $TPU_STRATEGY"
+echo "    probe first:    $PROBE_FIRST"
 echo
 
 gcloud compute tpus queued-resources create "$QR_NAME" \
@@ -63,7 +80,7 @@ gcloud compute tpus queued-resources create "$QR_NAME" \
     --accelerator-type="$ACCEL_TYPE" \
     --runtime-version="$RUNTIME" \
     --metadata-from-file=startup-script="$STARTUP_SCRIPT" \
-    --metadata="config-file=$CONFIG_FILE" \
+    --metadata="$metadata_pairs" \
     "${extra_flags[@]}"
 
 echo
