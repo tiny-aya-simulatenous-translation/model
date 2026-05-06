@@ -164,16 +164,15 @@ fi
 LIBPYTHON_DIR="$(dirname "$(find "$HOME/.local/share/uv/python" -name 'libpython3.12.so.1.0' -type f 2>/dev/null | head -1)")"
 echo "[startup] LIBPYTHON_DIR=$LIBPYTHON_DIR"
 
-# Persistent XLA compile cache. Survives process restarts (spot preemption,
-# OOM-kill, supervisor timeout) so we don't repeat the multi-minute backbone
-# + depth-decoder compile on every recovery cycle. Lives on /mnt/data (the
-# local SSD scratch) rather than /tmp because /tmp is tmpfs and would lose
-# the cache on host reboot. Keyed by program hash, so different code -> new
-# cache entry automatically.
-XLA_CACHE_DIR="${XLA_CACHE_DIR:-/mnt/data/xla_cache}"
-sudo mkdir -p "$XLA_CACHE_DIR"
-sudo chown "$USER:$USER" "$XLA_CACHE_DIR"
-echo "[startup] XLA_CACHE_DIR=$XLA_CACHE_DIR"
+# Persistent XLA compile cache: DISABLED.
+# pytorch/xla #8930 + #9094 (both OPEN as of 2026-05): TPU v4 + torch_xla
+# 2.9 fails with "Failed to deserialize executable: UNIMPLEMENTED" when
+# the cache is enabled. The fix in PR #9759 (Mar 2026) is not yet in a
+# released wheel. Until then we explicitly do NOT set
+# XLA_PERSISTENT_CACHE_PATH; pay the compile cost on every process start.
+# (Hot redeploys via _remote_redeploy.sh do NOT restart the python
+# process for cosmetic edits, so this only hurts on spot preemption.)
+echo "[startup] XLA persistent cache disabled (pytorch/xla #8930)"
 
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 # Optional pre-flight probe of sharding strategies on the live mesh.
@@ -192,22 +191,25 @@ fi
 tmux new-session -d -s "$TMUX_SESSION" "
     set -euo pipefail
     cd '$REPO_DIR/simultaneous-translation'
-    while true; do
-        echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
-        DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
-        XLA_DISABLE_FUNCTIONALIZATION=0 \
-        XLA_PERSISTENT_CACHE_PATH='$XLA_CACHE_DIR' \
-        TPU_STRATEGY='$TPU_STRATEGY_META' \
-        LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
-        HF_TOKEN='$HF_TOKEN' \
-        WANDB_API_KEY='${WANDB_API_KEY:-}' \
-        uv run python scripts/train_hierarchical.py \
-            --config '$CONFIG_FILE' \
-            --resume auto 2>&1 | tee -a /tmp/train.log
-        echo \"[\$(date -Is)] training exited with status \$?, sleeping 30s\" | tee -a /tmp/train.log
-        sleep 30
-    done
+    echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
+    DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
+    XLA_DISABLE_FUNCTIONALIZATION=0 \
+    TPU_STRATEGY='$TPU_STRATEGY_META' \
+    LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
+    HF_TOKEN='$HF_TOKEN' \
+    WANDB_API_KEY='${WANDB_API_KEY:-}' \
+    PYTHONUNBUFFERED=1 \
+    uv run python -u scripts/train_hierarchical.py \
+        --config '$CONFIG_FILE' \
+        --resume auto 2>&1 | tee -a /tmp/train.log
+    echo \"[\$(date -Is)] training exited with status \$?\" | tee -a /tmp/train.log
 "
+# NOTE: 'while true' supervisor loop intentionally removed.
+# GCP spot TPU preemption tears down the VM, not the python process,
+# so a process-level supervisor cannot recover. The QR's spot lifecycle
+# triggers a host reboot, after which this startup_script.sh re-runs
+# (idempotent) and re-launches training fresh. Process-level supervision
+# was hiding compile-time errors as transient failures and burning quota.
 
 echo "=== [$(date -Is)] startup_script.sh complete on $(hostname) ==="
 echo "Tail logs with: tmux attach -t $TMUX_SESSION   OR   tail -f /tmp/train.log"

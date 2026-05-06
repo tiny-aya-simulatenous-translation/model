@@ -52,11 +52,11 @@ sudo rm -f "$TARBALL_LOCAL"
 LIBPYTHON_DIR="$(dirname "$(sudo find /root/.local/share/uv/python -name 'libpython3.12.so.1.0' -type f 2>/dev/null | head -1)")"
 echo "[remote] LIBPYTHON_DIR=$LIBPYTHON_DIR"
 
-# Persistent XLA compile cache (see startup_script.sh for rationale).
-XLA_CACHE_DIR="${XLA_CACHE_DIR:-/mnt/data/xla_cache}"
-sudo mkdir -p "$XLA_CACHE_DIR"
-sudo chown root:root "$XLA_CACHE_DIR"
-echo "[remote] XLA_CACHE_DIR=$XLA_CACHE_DIR"
+# Persistent XLA compile cache: DISABLED.
+# pytorch/xla #8930 + #9094 (OPEN as of 2026-05): TPU v4 + torch_xla 2.9
+# crashes "Failed to deserialize executable: UNIMPLEMENTED" when the
+# cache is enabled. Stay unset until PR #9759 lands in a released wheel.
+echo "[remote] XLA persistent cache disabled (pytorch/xla #8930)"
 
 # 4. Pull HF/W&B secrets.
 HF_TOKEN="$(gcloud secrets versions access latest --secret=hf-token)"
@@ -78,28 +78,29 @@ if [ "$RUN_PROBE_ONLY" = "1" ]; then
     exit 0
 fi
 
-# 5. Launch real training under tmux.  We write the inner command to a file
-#    so the tmux quoting stays simple.
+# 5. Launch real training under tmux. We write the inner command to a file
+#    so the tmux quoting stays simple. The supervisor 'while true' loop is
+#    intentionally absent: GCP spot TPU preemption is a VM-level event,
+#    not a process-level one, so process supervision hides compile errors
+#    as transient failures. Failures bubble up and the orchestrator
+#    classifies + redeploys per .factory/orchestration/playbook/.
 INNER_SCRIPT="/tmp/train_loop.sh"
 sudo tee "$INNER_SCRIPT" >/dev/null <<INNER
 #!/bin/bash
 set -e
 cd "$REPO_DIR/simultaneous-translation"
-while true; do
-    echo "[\$(date -Is)] launching train_hierarchical.py [strategy=$TPU_STRATEGY]" | tee -a /tmp/train.log
-    DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
-    XLA_DISABLE_FUNCTIONALIZATION=0 \
-    XLA_PERSISTENT_CACHE_PATH="$XLA_CACHE_DIR" \
-    TPU_STRATEGY=$TPU_STRATEGY \
-    LD_LIBRARY_PATH="$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}" \
-    HF_TOKEN="$HF_TOKEN" \
-    WANDB_API_KEY="$WANDB_API_KEY" \
-    "$UV_BIN" run python scripts/train_hierarchical.py \
-        --config "$CONFIG_FILE" \
-        --resume auto 2>&1 | tee -a /tmp/train.log
-    echo "[\$(date -Is)] training exited with status \$?, sleeping 30s" | tee -a /tmp/train.log
-    sleep 30
-done
+echo "[\$(date -Is)] launching train_hierarchical.py [strategy=$TPU_STRATEGY]" | tee -a /tmp/train.log
+DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
+XLA_DISABLE_FUNCTIONALIZATION=0 \
+TPU_STRATEGY=$TPU_STRATEGY \
+LD_LIBRARY_PATH="$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}" \
+HF_TOKEN="$HF_TOKEN" \
+WANDB_API_KEY="$WANDB_API_KEY" \
+PYTHONUNBUFFERED=1 \
+"$UV_BIN" run python -u scripts/train_hierarchical.py \
+    --config "$CONFIG_FILE" \
+    --resume auto 2>&1 | tee -a /tmp/train.log
+echo "[\$(date -Is)] training exited with status \$?" | tee -a /tmp/train.log
 INNER
 sudo chmod +x "$INNER_SCRIPT"
 sudo tmux new-session -d -s train "bash $INNER_SCRIPT"

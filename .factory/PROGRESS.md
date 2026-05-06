@@ -26,6 +26,126 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-06T05:03:19Z | feat/tpu-support@59a8a75 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/_remote_redeploy.sh`
+
+
+## 2026-05-06T05:03:03Z | feat/tpu-support@59a8a75 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/_remote_redeploy.sh`
+
+
+## 2026-05-06T05:02:55Z | feat/tpu-support@59a8a75 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/startup_script.sh`
+
+
+## 2026-05-06T05:02:38Z | feat/tpu-support@59a8a75 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/startup_script.sh`
+
+
+## 2026-05-06T05:02:23Z | feat/tpu-support@59a8a75 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/model/scan_utils.py`
+
+
+## 2026-05-06T05:01:18Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/orch_state.json`
+
+
+## 2026-05-06T05:01:17Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/scheduled_checkin.py`
+
+
+## 2026-05-06T05:01:15Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/orch_poll.py`
+
+
+## 2026-05-06T05:00:00Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/droids/tpu-diagnoser.md`
+
+
+## 2026-05-06T04:59:59Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/droids/tpu-watchdog.md`
+
+
+## 2026-05-06T04:56:59Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-06T04:56:58Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-orchestrate/SKILL.md`
+
+
+## 2026-05-06T04:55:21Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/SPEC.md`
+
+
+## 2026-05-06T04:55:20Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/README.md`
+
+
+## 2026-05-06T04:55:19Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/playbook/checkin-protocol.md`
+
+
+## 2026-05-06T04:55:18Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/playbook/tier-definitions.md`
+
+
+## 2026-05-06T04:55:17Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/playbook/diagnosis-table.md`
+
+
+## 2026-05-06T04:52:57Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/diagrams/render.sh`
+
+
+## 2026-05-06T04:52:56Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/diagrams/05-tier3-escalation.mmd`
+
+
+## 2026-05-06T04:52:54Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/diagrams/04-checkin-cadence.mmd`
+
+
+## 2026-05-06T04:52:53Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/diagrams/02-state-machine.mmd`
+
+
+## 2026-05-06T04:52:52Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/diagrams/01-architecture.mmd`
+
+
+## 2026-05-06T04:52:51Z | feat/tpu-support@59a8a75 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/diagrams/03-sequence.mmd`
+
+
+## 2026-05-06T04:49:30Z | feat/tpu-support@59a8a75 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T04:41:38Z | feat/tpu-support@59a8a75 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T04:35:04Z | feat/tpu-support@59a8a75 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T04:19:49Z | feat/tpu-support@59a8a75 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
 ## 2026-05-06T04:15:38Z | feat/tpu-support@1eaa339 | fail | verify
 verify: 11 passed, 1 failed out of 12 on Stop
 

@@ -1,0 +1,20 @@
+%% TPU canary orchestrator -- State machine
+%% PATCH -> DEPLOY -> WATCH -> CLASSIFY -> DECIDE
+%% Source spec: ../SPEC.md (section "State machine")
+
+stateDiagram-v2
+    [*] --> PATCH
+    PATCH --> DEPLOY
+    DEPLOY --> WATCH
+    WATCH --> WATCH: heartbeat ok
+    WATCH --> CHECKIN: T+15/30/45/60/90
+    WATCH --> SUCCESS: step>=1 + loss decreasing
+    WATCH --> CLASSIFY: stall or crash
+    CHECKIN --> WATCH: user continues
+    CHECKIN --> ESCALATE: user aborts
+    CHECKIN --> PATCH: user adjusts
+    CLASSIFY --> DECIDE
+    DECIDE --> PATCH: known fix + not repeat
+    DECIDE --> ESCALATE: unknown OR repeat OR T3
+    SUCCESS --> [*]
+    ESCALATE --> [*]

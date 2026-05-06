@@ -416,29 +416,20 @@ class _FusedScanLayer(nn.Module):
                 [_KwargBoundLayer(w.layer, args, kwargs) for w in layers]
             )
             try:
-                output = scan_fn(bound_layers, hidden_states, is_layer_pure=True)
+                # PyTorch issue #105485: is_layer_pure=True triggers a
+                # FakeTensorMode trace through aten.index_select, which
+                # asserts on the position-embedding gather inside the
+                # decoder layer. We drop the flag (let scan_layers fall
+                # through its non-pure path) so the trace stays real.
+                output = scan_fn(bound_layers, hidden_states)
                 return (output,)
-            except TypeError as err:  # pragma: no cover - depends on TPU runtime
-                if "is_layer_pure" in str(err):
-                    # Older torch_xla without is_layer_pure; retry
-                    # without the kwarg, still in the kwarg-bound form.
-                    try:
-                        output = scan_fn(bound_layers, hidden_states)
-                        return (output,)
-                    except Exception as err2:  # noqa: BLE001
-                        print(
-                            f"[scan_utils] scan_layers raised "
-                            f"{type(err2).__name__}: {err2!r}; "
-                            "permanently disabling scan for this stack."
-                        )
-                        self.stack.scan_fn = None
-                else:
-                    print(
-                        f"[scan_utils] scan_layers raised "
-                        f"{type(err).__name__}: {err!r}; "
-                        "permanently disabling scan for this stack."
-                    )
-                    self.stack.scan_fn = None
+            except Exception as err:  # pragma: no cover - depends on TPU runtime
+                print(
+                    f"[scan_utils] scan_layers raised "
+                    f"{type(err).__name__}: {err!r}; "
+                    "permanently disabling scan for this stack."
+                )
+                self.stack.scan_fn = None
             except Exception as err:  # pragma: no cover - depends on TPU runtime
                 print(
                     f"[scan_utils] scan_layers raised {type(err).__name__}: {err!r}; "
