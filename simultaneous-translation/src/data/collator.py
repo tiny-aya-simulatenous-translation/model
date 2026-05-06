@@ -1,4 +1,16 @@
-"""Batch collation for interleaved audio-text sequences."""
+"""Batch collation for interleaved audio-text sequences.
+
+WHY THIS EXISTS
+---------------
+PyTorch's default collator stacks tensors only when shapes match. Our
+samples have variable frame lengths, so :class:`InterleavedCollator`
+right-pads each batch element to the longest sequence and emits the
+attention mask + per-sample loss mask the loss function expects.
+
+The collator is shared by Stage 1 and Stage 2 datasets. There is no
+TPU-specific behaviour here -- padding is done on host CPU and the
+DataLoader hands the result to the device just like on GPU.
+"""
 
 import torch
 
@@ -25,9 +37,7 @@ class InterleavedCollator:
         num_codebooks = batch[0]["audio_codes"].shape[0]
 
         # Pad audio codes: [B, CB, T_max]
-        audio_codes = torch.full(
-            (B, num_codebooks, max_len), self.audio_pad_id, dtype=torch.long
-        )
+        audio_codes = torch.full((B, num_codebooks, max_len), self.audio_pad_id, dtype=torch.long)
         for i, item in enumerate(batch):
             T = item["audio_codes"].shape[1]
             audio_codes[i, :, :T] = item["audio_codes"]

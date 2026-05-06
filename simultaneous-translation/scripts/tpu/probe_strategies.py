@@ -1,18 +1,36 @@
-"""Probe sharding strategies on the live TPU mesh.
+"""Probe SPMD sharding strategies on the live TPU mesh.
 
-Runs a tiny stand-in model (a few Linear + a frozen "backbone") through each
-strategy and prints compile time, peak HBM, step time, and the SPMD sharding
-spec of the activations. Cheaper than loading the full 5.17B model and helps
-us pick a strategy before paying the full uv-sync + HF-download price.
+WHY THIS EXISTS
+---------------
+Loading the real 5.17B composite onto a v5litepod-16 takes ~10
+minutes (HF download, weight init, surgery). Trying three sharding
+strategies on the real model would burn an hour just on setup. This
+script swaps in a tiny stand-in model (a few Linear layers + a
+frozen "backbone") and runs it through each strategy in a fresh
+subprocess, so we can decide which strategy to commit to *before*
+paying the full uv-sync + HF-download price.
 
-Usage on a TPU pod (worker 0 only is fine; the runtime is single-process):
-    PJRT_DEVICE=TPU LD_LIBRARY_PATH=$LIBPYTHON_DIR \
-        uv run python scripts/tpu/probe_strategies.py \
+What "subprocess per strategy" buys us
+--------------------------------------
+SPMD failures often kill the whole Python process (the XLA
+partitioner asserts and aborts). Running each strategy in its own
+``subprocess.run`` fork-and-execve insulates the parent: a crashed
+``replicated`` run does not contaminate the ``fsdpv2`` run that
+follows.
+
+Usage on a TPU pod (worker 0 only -- the SPMD runtime is single-
+process)::
+
+    PJRT_DEVICE=TPU LD_LIBRARY_PATH=$LIBPYTHON_DIR \\
+        uv run python scripts/tpu/probe_strategies.py \\
             --strategies replicated fsdpv2 fsdpv2_lora --steps 5
 
-Each strategy is run in a fresh subprocess so any XLA crash in one doesn't
-poison the next.
+Output: a comparison table on stdout plus a JSON dump under
+``/tmp/probe-results.json``. Use the ``compile_s``, ``median_step_s``,
+and ``peak_hbm_gb`` columns to pick a strategy. Record the choice in
+``.factory/memories.md`` under "TPU strategy decisions".
 """
+
 from __future__ import annotations
 
 import argparse
@@ -25,7 +43,6 @@ from pathlib import Path
 
 import torch
 import torch.nn as nn
-
 
 # --------------------------------------------------------------------------
 # the tiny stand-in model
@@ -87,8 +104,8 @@ def _run_single(strategy: str, steps: int, batch_per_chip: int, hidden: int) -> 
 
     import torch_xla
     import torch_xla.core.xla_model as xm
-    import torch_xla.runtime as xr
     import torch_xla.distributed.spmd as xs
+    import torch_xla.runtime as xr
     from torch_xla.distributed.spmd import Mesh
 
     xr.use_spmd()
@@ -124,14 +141,11 @@ def _run_single(strategy: str, steps: int, batch_per_chip: int, hidden: int) -> 
                 return any(p.requires_grad for p in module.parameters(recurse=False))
             return isinstance(module, nn.Linear)
 
-        wrapped = FSDPv2(model, mesh=mesh, auto_wrap_policy=_policy,
-                         shard_output=_shard_output)
+        wrapped = FSDPv2(model, mesh=mesh, auto_wrap_policy=_policy, shard_output=_shard_output)
     else:
         raise ValueError(f"unknown strategy {strategy}")
 
-    optimizer = torch.optim.AdamW(
-        [p for p in wrapped.parameters() if p.requires_grad], lr=1e-4
-    )
+    optimizer = torch.optim.AdamW([p for p in wrapped.parameters() if p.requires_grad], lr=1e-4)
 
     B = batch_per_chip * n
     timings = []
@@ -159,8 +173,10 @@ def _run_single(strategy: str, steps: int, batch_per_chip: int, hidden: int) -> 
         except Exception:
             pass
 
-        print(f"[probe:{strategy}] step={step} dt={dt:.3f}s peak_hbm={peak_gb:.2f}GB "
-              f"loss={loss.item():.4f}")
+        print(
+            f"[probe:{strategy}] step={step} dt={dt:.3f}s peak_hbm={peak_gb:.2f}GB "
+            f"loss={loss.item():.4f}"
+        )
 
     median_step = sorted(timings)[len(timings) // 2] if timings else float("nan")
     result = {
@@ -186,10 +202,14 @@ def _spawn(strategy: str, steps: int, batch_per_chip: int, hidden: int) -> dict:
         sys.executable,
         __file__,
         "--child",
-        "--strategy", strategy,
-        "--steps", str(steps),
-        "--batch-per-chip", str(batch_per_chip),
-        "--hidden", str(hidden),
+        "--strategy",
+        strategy,
+        "--steps",
+        str(steps),
+        "--batch-per-chip",
+        str(batch_per_chip),
+        "--hidden",
+        str(hidden),
     ]
     print(f"[probe] spawning: {' '.join(cmd)}")
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -215,7 +235,8 @@ def main():
     ap.add_argument("--child", action="store_true", help="internal: child process")
     ap.add_argument("--strategy", type=str, default=None)
     ap.add_argument(
-        "--strategies", nargs="+",
+        "--strategies",
+        nargs="+",
         default=["replicated", "fsdpv2_lora", "fsdpv2"],
     )
     ap.add_argument("--steps", type=int, default=5)
@@ -232,6 +253,7 @@ def main():
             raise
         except Exception as e:
             import traceback
+
             traceback.print_exc()
             print(f"[probe:{args.strategy}] CRASH: {e}")
             return 2

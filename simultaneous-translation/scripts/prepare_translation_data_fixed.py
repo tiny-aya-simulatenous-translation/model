@@ -1,7 +1,16 @@
-"""Prepare PROPERLY MATCHED translation pairs from FLEURS.
+"""Prepare strictly-matched translation pairs from FLEURS.
 
-Matches samples by sentence ID across languages so TR, HI, and EN
-all correspond to the same content.
+WHY THIS EXISTS
+---------------
+``prepare_translation_data.py`` had a subtle bug where some pairs
+came from different sentences with similar IDs. This is the fixed
+variant: it joins on ``sentence_id`` with strict equality so the
+TR / HI / EN triplets are guaranteed to be the same content.
+
+Use this script for any new data prep; the older one is kept only
+for reproducing historical experiments.
+
+CPU-only.
 
 Usage:
     python scripts/prepare_translation_data_fixed.py --output_dir data/stage2_fixed --num_pairs 25
@@ -11,8 +20,8 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
 import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -45,42 +54,46 @@ def create_matched_pairs(num_pairs=25):
         en_s = en_by_id[sid]
 
         # TR → HI
-        pairs.append({
-            "source": {
-                "audio": tr_s["audio"]["array"],
-                "sr": tr_s["audio"]["sampling_rate"],
-                "text": tr_s["transcription"],
-                "language": "tr",
-            },
-            "target": {
-                "audio": hi_s["audio"]["array"],
-                "sr": hi_s["audio"]["sampling_rate"],
-                "text": hi_s["transcription"],
-                "language": "hi",
-            },
-            "english": en_s["transcription"],
-            "sentence_id": sid,
-            "id": f"tr_hi_{sid:04d}",
-        })
+        pairs.append(
+            {
+                "source": {
+                    "audio": tr_s["audio"]["array"],
+                    "sr": tr_s["audio"]["sampling_rate"],
+                    "text": tr_s["transcription"],
+                    "language": "tr",
+                },
+                "target": {
+                    "audio": hi_s["audio"]["array"],
+                    "sr": hi_s["audio"]["sampling_rate"],
+                    "text": hi_s["transcription"],
+                    "language": "hi",
+                },
+                "english": en_s["transcription"],
+                "sentence_id": sid,
+                "id": f"tr_hi_{sid:04d}",
+            }
+        )
 
         # HI → TR
-        pairs.append({
-            "source": {
-                "audio": hi_s["audio"]["array"],
-                "sr": hi_s["audio"]["sampling_rate"],
-                "text": hi_s["transcription"],
-                "language": "hi",
-            },
-            "target": {
-                "audio": tr_s["audio"]["array"],
-                "sr": tr_s["audio"]["sampling_rate"],
-                "text": tr_s["transcription"],
-                "language": "tr",
-            },
-            "english": en_s["transcription"],
-            "sentence_id": sid,
-            "id": f"hi_tr_{sid:04d}",
-        })
+        pairs.append(
+            {
+                "source": {
+                    "audio": hi_s["audio"]["array"],
+                    "sr": hi_s["audio"]["sampling_rate"],
+                    "text": hi_s["transcription"],
+                    "language": "hi",
+                },
+                "target": {
+                    "audio": tr_s["audio"]["array"],
+                    "sr": tr_s["audio"]["sampling_rate"],
+                    "text": tr_s["transcription"],
+                    "language": "tr",
+                },
+                "english": en_s["transcription"],
+                "sentence_id": sid,
+                "id": f"hi_tr_{sid:04d}",
+            }
+        )
 
     print(f"Created {len(pairs)} pairs ({num_pairs} TR→HI + {num_pairs} HI→TR)")
 
@@ -97,8 +110,8 @@ def create_matched_pairs(num_pairs=25):
 
 def encode_pairs(pairs, output_dir: Path):
     """Encode with Mimi and save."""
+
     from src.data.mimi_encoder import MimiEncoder
-    import json
 
     print("\nLoading Mimi...")
     encoder = MimiEncoder(device="cuda")
@@ -111,19 +124,22 @@ def encode_pairs(pairs, output_dir: Path):
         tgt_audio = torch.from_numpy(np.array(pair["target"]["audio"], dtype=np.float32))
         tgt_codes = encoder.encode(tgt_audio, sr=pair["target"]["sr"])
 
-        torch.save({
-            "source_audio_codes": src_codes,
-            "target_audio_codes": tgt_codes,
-            "source_text": pair["source"]["text"],
-            "target_text": pair["target"]["text"],
-            "english_text": pair["english"],
-            "source_language": pair["source"]["language"],
-            "target_language": pair["target"]["language"],
-            "sentence_id": pair["sentence_id"],
-        }, output_dir / f"{pair['id']}.pt")
+        torch.save(
+            {
+                "source_audio_codes": src_codes,
+                "target_audio_codes": tgt_codes,
+                "source_text": pair["source"]["text"],
+                "target_text": pair["target"]["text"],
+                "english_text": pair["english"],
+                "source_language": pair["source"]["language"],
+                "target_language": pair["target"]["language"],
+                "sentence_id": pair["sentence_id"],
+            },
+            output_dir / f"{pair['id']}.pt",
+        )
 
         if (i + 1) % 10 == 0:
-            print(f"  Encoded {i+1}/{len(pairs)}")
+            print(f"  Encoded {i + 1}/{len(pairs)}")
 
     print(f"Saved {len(pairs)} pairs to {output_dir}")
 
@@ -137,9 +153,9 @@ def main():
     pairs = create_matched_pairs(args.num_pairs)
     encode_pairs(pairs, Path(args.output_dir))
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"Done! {len(pairs)} properly matched pairs in {args.output_dir}")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

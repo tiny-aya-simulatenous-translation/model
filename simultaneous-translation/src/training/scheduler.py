@@ -1,6 +1,18 @@
-"""Linear warmup + cosine decay LR scheduler.
+"""Linear-warmup + cosine-decay LR scheduler.
 
-Ported verbatim from tinyaya-moshi-backbone/src/moshi_backbone/training/scheduler.py.
+WHY THIS EXISTS
+---------------
+``WarmupCosineScheduler`` is the standard recipe for transformer
+fine-tuning: ramp the LR linearly from 0 to ``base_lr`` over the
+warmup window, then decay along a cosine to ``min_lr_ratio * base_lr``
+by ``total_steps``.
+
+The class deliberately does *not* inherit from
+``torch.optim.lr_scheduler._LRScheduler`` -- the parent's hidden
+``last_epoch`` accounting confuses our explicit ``step(int)`` API
+and needlessly complicates checkpoint state.
+
+This file is device-agnostic; nothing inside touches CUDA or XLA.
 """
 
 import math
@@ -24,15 +36,19 @@ class WarmupCosineScheduler:
 
     def step(self, step: int):
         m = self.get_lr_multiplier(step)
-        for group, base_lr in zip(self.optimizer.param_groups, self.base_lrs):
+        for group, base_lr in zip(self.optimizer.param_groups, self.base_lrs, strict=True):
             group["lr"] = base_lr * m
 
     def get_last_lrs(self) -> list[float]:
         return [group["lr"] for group in self.optimizer.param_groups]
 
     def state_dict(self) -> dict:
-        return {"base_lrs": self.base_lrs, "warmup_steps": self.warmup_steps,
-                "total_steps": self.total_steps, "min_lr_ratio": self.min_lr_ratio}
+        return {
+            "base_lrs": self.base_lrs,
+            "warmup_steps": self.warmup_steps,
+            "total_steps": self.total_steps,
+            "min_lr_ratio": self.min_lr_ratio,
+        }
 
     def load_state_dict(self, sd: dict):
         self.base_lrs = sd["base_lrs"]

@@ -1,7 +1,24 @@
-"""Dataset classes for Stage 1 (audio understanding) and Stage 2 (translation)."""
+"""Dataset classes for Stage 1 (audio understanding) and Stage 2 (translation).
+
+WHY THIS EXISTS
+---------------
+Stage 2 ingests pre-encoded ``.pt`` files holding Mimi audio codes
+plus optional word-level alignment JSONs. This module exposes two
+``torch.utils.data.Dataset`` subclasses:
+
+* :class:`InterleavedAudioDataset` -- Stage 1 single-language
+  audio-understanding dataset.
+* :class:`StreamingTranslationDataset` (defined later in the file)
+  -- Stage 2 streaming translation dataset that lazily reads
+  ``.pt`` shards from local disk or GCS.
+
+The dataset code is device-agnostic: tensors come out of ``__getitem__``
+on the host CPU and the collator + DataLoader move them onto the
+device. On TPU SPMD the device move happens implicitly via
+``backend.mark_sharding`` in the training loop.
+"""
 
 import json
-import os
 from pathlib import Path
 
 import torch
@@ -51,7 +68,7 @@ class InterleavedAudioDataset(Dataset):
 
         # Truncate if needed
         if T > self.max_frames:
-            audio_codes = audio_codes[:, :self.max_frames]
+            audio_codes = audio_codes[:, : self.max_frames]
             T = self.max_frames
 
         # Load alignment JSON (same stem as .pt)
@@ -126,8 +143,12 @@ class TranslationDataset(Dataset):
         combined_codes = torch.cat([src_codes, tgt_codes], dim=1)  # [CB, T_total]
         T_total = combined_codes.shape[1]
 
-        # Load alignments if available
-        src_json = pt_path.with_name(pt_path.stem + "_source.json")
+        # Load alignments if available. ``src_json`` is intentionally
+        # not consumed (source text is teacher-forced as zero-padding
+        # below); we resolve it anyway so the path layout is documented
+        # right next to ``tgt_json`` and a future regression that
+        # introduces source-side teacher forcing has a one-line edit.
+        src_json = pt_path.with_name(pt_path.stem + "_source.json")  # noqa: F841
         tgt_json = pt_path.with_name(pt_path.stem + "_target.json")
 
         # Source text (zero padding for now — source is teacher-forced)
@@ -224,10 +245,16 @@ class StreamingTranslationDataset(Dataset):
         src_align = load_alignments(src_align_path) if src_align_path.exists() else None
         tgt_align = load_alignments(tgt_align_path) if tgt_align_path.exists() else None
 
-        src_text = self.interleaver.prepare_item(src_align, T_src) if src_align is not None \
+        src_text = (
+            self.interleaver.prepare_item(src_align, T_src)
+            if src_align is not None
             else torch.full((T_src,), self.interleaver.zero_padding, dtype=torch.long)
-        tgt_text = self.interleaver.prepare_item(tgt_align, T_tgt) if tgt_align is not None \
+        )
+        tgt_text = (
+            self.interleaver.prepare_item(tgt_align, T_tgt)
+            if tgt_align is not None
             else torch.full((T_tgt,), self.interleaver.zero_padding, dtype=torch.long)
+        )
 
         # Truncate to max_frames — target first; preserve source
         total = T_src + T_tgt

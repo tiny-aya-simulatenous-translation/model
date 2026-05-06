@@ -49,10 +49,18 @@ TPU_STRATEGY_META="$(read_meta tpu-strategy auto)"
 # and dump results to /tmp/probe-results.json. Useful for canary runs to pick
 # the optimal strategy.
 PROBE_FIRST="$(read_meta probe-first 0)"
+# launch_spot.sh stamps `is-spot=1` into the QR metadata so this script can
+# tell preemptible runs from on-demand. We use it to set WANDB_RESUME=allow
+# so a preempt resumes the same wandb run instead of forking a new one.
+IS_SPOT="$(read_meta is-spot 0)"
 echo "[startup] CONFIG_FILE=$CONFIG_FILE"
 echo "[startup] OVERLAY_GS_URI=${OVERLAY_GS_URI:-<unset>}"
 echo "[startup] REPO_TARBALL_GS_URI=${REPO_TARBALL_GS_URI:-<unset>}"
-echo "[startup] TPU_STRATEGY=$TPU_STRATEGY_META PROBE_FIRST=$PROBE_FIRST"
+echo "[startup] TPU_STRATEGY=$TPU_STRATEGY_META PROBE_FIRST=$PROBE_FIRST IS_SPOT=$IS_SPOT"
+if [ "$IS_SPOT" = "1" ]; then
+    export WANDB_RESUME=allow
+    echo "[startup] spot mode: WANDB_RESUME=allow"
+fi
 
 # ----- 1. system deps -----
 # Dpkg::Lock::Timeout=600 lets apt wait for unattended-upgrades (which
@@ -128,11 +136,44 @@ uv run huggingface-cli download "$HF_DATASET" \
     --repo-type dataset \
     --local-dir "$DATA_DIR"
 
+# The HF dataset ships the .pt encoded tensors AND alignment JSONs together
+# inside two tarballs under packed/. Both tarballs contain a top-level
+# encoded/ directory, so we use --strip-components=1 to flatten everything
+# into $DATA_DIR/encoded/ where the dataset code expects them
+# (cf. configs/*.yaml encoded_dir + src/data/dataset.py _resolve fallback).
+# Idempotent: skip extraction if the marker file already exists.
+if [ -d "$DATA_DIR/packed" ] && [ ! -f "$DATA_DIR/encoded/.unpacked" ]; then
+    sudo mkdir -p "$DATA_DIR/encoded"
+    sudo chown "$USER:$USER" "$DATA_DIR/encoded"
+    if [ -f "$DATA_DIR/packed/encoded_pt.tar.gz" ]; then
+        echo "[startup] extracting packed/encoded_pt.tar.gz -> $DATA_DIR/encoded"
+        tar -xzf "$DATA_DIR/packed/encoded_pt.tar.gz" \
+            -C "$DATA_DIR/encoded" --strip-components=1
+    fi
+    if [ -f "$DATA_DIR/packed/encoded_alignments.tar.gz" ]; then
+        echo "[startup] extracting packed/encoded_alignments.tar.gz -> $DATA_DIR/encoded"
+        tar -xzf "$DATA_DIR/packed/encoded_alignments.tar.gz" \
+            -C "$DATA_DIR/encoded" --strip-components=1
+    fi
+    touch "$DATA_DIR/encoded/.unpacked"
+fi
+
 # ----- 7. launch training with auto-restart in tmux -----
 # torch_xla's _XLAC.so dynamically links libpython3.12.so.1.0, which uv keeps
 # inside its managed-Python directory rather than on the standard linker path.
 LIBPYTHON_DIR="$(dirname "$(find "$HOME/.local/share/uv/python" -name 'libpython3.12.so.1.0' -type f 2>/dev/null | head -1)")"
 echo "[startup] LIBPYTHON_DIR=$LIBPYTHON_DIR"
+
+# Persistent XLA compile cache. Survives process restarts (spot preemption,
+# OOM-kill, supervisor timeout) so we don't repeat the multi-minute backbone
+# + depth-decoder compile on every recovery cycle. Lives on /mnt/data (the
+# local SSD scratch) rather than /tmp because /tmp is tmpfs and would lose
+# the cache on host reboot. Keyed by program hash, so different code -> new
+# cache entry automatically.
+XLA_CACHE_DIR="${XLA_CACHE_DIR:-/mnt/data/xla_cache}"
+sudo mkdir -p "$XLA_CACHE_DIR"
+sudo chown "$USER:$USER" "$XLA_CACHE_DIR"
+echo "[startup] XLA_CACHE_DIR=$XLA_CACHE_DIR"
 
 tmux kill-session -t "$TMUX_SESSION" 2>/dev/null || true
 # Optional pre-flight probe of sharding strategies on the live mesh.
@@ -155,6 +196,7 @@ tmux new-session -d -s "$TMUX_SESSION" "
         echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
         DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
         XLA_DISABLE_FUNCTIONALIZATION=0 \
+        XLA_PERSISTENT_CACHE_PATH='$XLA_CACHE_DIR' \
         TPU_STRATEGY='$TPU_STRATEGY_META' \
         LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
         HF_TOKEN='$HF_TOKEN' \

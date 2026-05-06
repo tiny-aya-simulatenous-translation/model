@@ -1,20 +1,26 @@
-"""Text-audio interleaver — maps word timestamps to audio frame positions.
+"""Text-audio interleaver -- maps word timestamps to audio frame positions.
 
-Ported from moshi-finetune/finetune/data/interleaver.py, adapted to use
-TinyAya's tokenizer instead of SentencePiece.
+WHY THIS EXISTS
+---------------
+The Moshi-style summed-embedding scheme requires the text and audio
+streams to be aligned at the *frame* level. Mimi runs at 12.5 Hz so
+each frame is 80 ms wide. Given a word-level alignment (``word``,
+``start``, ``end`` triples produced by the data pipeline), this
+module places the first text token of each word at the frame where
+the word begins, and fills the remaining frames with padding tokens.
 
-At 12.5 Hz, each audio frame = 80ms. Text tokens are placed at the frame
-where the corresponding word starts being spoken. Frames without words
-get padding tokens.
+Ported from ``moshi-finetune/finetune/data/interleaver.py`` and
+adapted to use TinyAya's HF tokenizer instead of SentencePiece.
+
+This file does not touch GPU or TPU; it runs entirely on host CPU
+during DataLoader iteration.
 """
 
 import json
-import math
 from collections import deque
 from pathlib import Path
 
 import torch
-
 
 # Special token IDs (must match TinyAyaBackbone)
 TEXT_PADDING = 262144
@@ -84,10 +90,7 @@ class Interleaver:
 
             for t in range(num_frames):
                 # Check if any word starts at this frame
-                while (
-                    i < len(alignments)
-                    and alignments[i][1][0] * self.audio_frame_rate < t + 1
-                ):
+                while i < len(alignments) and alignments[i][1][0] * self.audio_frame_rate < t + 1:
                     tokenized = alignments[i][0]
                     last_word_end = int(alignments[i][1][1] * self.audio_frame_rate)
                     to_append_stack = deque(tokenized)
@@ -123,9 +126,7 @@ class Interleaver:
         if alignments is None:
             tokenized = None
         else:
-            tokenized = self._tokenize(
-                sorted(alignments, key=lambda x: x[1][0])
-            )
+            tokenized = self._tokenize(sorted(alignments, key=lambda x: x[1][0]))
             tokenized = self._keep_those_with_duration(tokenized)
 
         return self.build_token_stream(tokenized, num_frames)

@@ -1,7 +1,17 @@
-"""Stage 1: Audio understanding training.
+"""Stage 1: audio-understanding training (single-host GPU).
 
-Trains TinyAya to predict next audio tokens (codebook 0) and aligned text tokens
-on monolingual Turkish + Hindi audio.
+WHY THIS EXISTS
+---------------
+Stage 1 is a one-language-at-a-time pretraining pass: TinyAya learns
+to predict the next audio token (codebook 0 only) and the next text
+token aligned with the audio frame. Stage 2 starts from a Stage-1
+checkpoint, so this script is the upstream dependency of the whole
+translation pipeline.
+
+This script targets a single GPU host. The TPU version of Stage 2 is
+``scripts/train_hierarchical.py``; we never trained Stage 1 on TPU
+because the codebase 0-only loss was small enough to fit on a single
+H100.
 
 Usage:
     python scripts/train_stage1.py --data_dir data/stage1 --max_steps 2000
@@ -15,10 +25,10 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.model.backbone import TinyAyaBackbone
-from src.model.lora_setup import apply_lora, register_embedding_grad_mask, get_parameter_groups
-from src.data.dataset import InterleavedAudioDataset
 from src.data.collator import InterleavedCollator
+from src.data.dataset import InterleavedAudioDataset
+from src.model.backbone import TinyAyaBackbone
+from src.model.lora_setup import apply_lora, get_parameter_groups, register_embedding_grad_mask
 from src.training.trainer import Trainer
 
 
@@ -63,8 +73,10 @@ def main():
 
     total_params = sum(p.numel() for p in backbone.parameters())
     trainable_params = sum(p.numel() for p in backbone.parameters() if p.requires_grad)
-    print(f"\nTotal params: {total_params/1e9:.2f}B")
-    print(f"Trainable params: {trainable_params/1e6:.1f}M ({100*trainable_params/total_params:.1f}%)")
+    print(f"\nTotal params: {total_params / 1e9:.2f}B")
+    print(
+        f"Trainable params: {trainable_params / 1e6:.1f}M ({100 * trainable_params / total_params:.1f}%)"
+    )
 
     # === Dataset ===
     print("\n=== Loading dataset ===")
@@ -99,6 +111,7 @@ def main():
     # === W&B ===
     if args.use_wandb:
         import wandb
+
         wandb.init(project=args.wandb_project, config=vars(args))
 
     # === Train ===

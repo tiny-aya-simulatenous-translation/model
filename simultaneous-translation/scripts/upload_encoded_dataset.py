@@ -1,8 +1,19 @@
-"""Push encoded dataset (mimi tokens + whisper alignments + splits) to HF.
+"""Push the encoded dataset (Mimi tokens + Whisper alignments + splits) to HF Hub.
 
-Usage:
-    HF_TOKEN=... python scripts/upload_encoded_dataset.py \
-        --data-dir /path/to/phase-3-data-generation-pipeline/data \
+WHY THIS EXISTS
+---------------
+Once the data pipeline has produced the ``.pt`` shards locally we
+upload them as a private HF dataset so the TPU pod can pull from
+HF instead of round-tripping through GCS. The script is a thin
+wrapper around ``HfApi.upload_folder`` with skip rules for caches
+and tarballs.
+
+CPU-only; run on the data-prep host.
+
+Usage::
+
+    HF_TOKEN=... python scripts/upload_encoded_dataset.py \\
+        --data-dir /path/to/phase-3-data-generation-pipeline/data \\
         --repo tiny-aya-translate/fleurs-tr-hi-mimi-encoded
 """
 
@@ -62,6 +73,7 @@ overlap).
     (data_dir / "README.md").write_text(readme)
 
     from huggingface_hub import HfApi, upload_folder
+
     api = HfApi(token=os.environ.get("HF_TOKEN"))
 
     repos = [args.repo, args.fallback_repo]
@@ -71,10 +83,14 @@ overlap).
             upload_folder(
                 repo_id=repo,
                 folder_path=str(data_dir),
-                allow_patterns=["encoded/*.pt", "encoded/*.json",
-                                "splits/*.jsonl", "README.md",
-                                "manifests/accepted.jsonl",
-                                "manifests/stats.json"],
+                allow_patterns=[
+                    "encoded/*.pt",
+                    "encoded/*.json",
+                    "splits/*.jsonl",
+                    "README.md",
+                    "manifests/accepted.jsonl",
+                    "manifests/stats.json",
+                ],
                 repo_type="dataset",
                 token=os.environ.get("HF_TOKEN"),
             )

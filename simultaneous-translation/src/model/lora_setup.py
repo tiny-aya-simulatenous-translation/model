@@ -1,6 +1,22 @@
-"""LoRA application and parameter group creation for TinyAya backbone."""
+"""LoRA application and parameter-group creation for the TinyAya backbone.
 
-import torch
+WHY THIS EXISTS
+---------------
+We don't fine-tune all 3.36B backbone parameters; we apply Low-Rank
+Adaptation (LoRA) to attention and embedding projections, plus full
+fine-tuning of the last two transformer blocks. This module owns the
+PEFT integration and the parameter-group scheme that the training
+loop hands to AdamW.
+
+LoRA matters more on TPU than GPU
+---------------------------------
+The composite is 5.17B parameters. With full fine-tuning the
+optimiser state alone (AdamW keeps fp32 m + v) is 8x the trainable
+size, which OOMs even fsdpv2 on v5e. LoRA + frozen-base trims the
+trainable count to ~274M (5.3%); the rest of the per-chip HBM budget
+is then dominated by activations, which ``scan_utils`` controls.
+"""
+
 import torch.nn as nn
 from peft import LoraConfig, TaskType, get_peft_model
 
@@ -78,11 +94,18 @@ def register_embedding_grad_mask(backbone):
     print("Embedding grad mask: skipped (base embeddings frozen, LoRA adapters handle updates)")
 
 
-def get_parameter_groups(backbone, lr_lora=1e-4, lr_full_ft=5e-5,
-                         lr_audio_embed=5e-4, lr_text_embed=5e-4,
-                         lr_audio_head=5e-4):
+def get_parameter_groups(
+    backbone,
+    lr_lora=1e-4,
+    lr_full_ft=5e-5,
+    lr_audio_embed=5e-4,
+    lr_text_embed=5e-4,
+    lr_audio_head=5e-4,
+):
     """Create optimizer parameter groups with per-component learning rates."""
-    num_layers = backbone.model.config.num_hidden_layers if hasattr(backbone.model, 'config') else 36
+    num_layers = (
+        backbone.model.config.num_hidden_layers if hasattr(backbone.model, "config") else 36
+    )
     ft_start = num_layers - 2
 
     groups = {

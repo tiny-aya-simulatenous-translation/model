@@ -21,18 +21,24 @@ allocation, with a reproducible, restart-tolerant launch path.
 
 ## 2. Allocation summary (TRC)
 
-The grant approved by TRC (May 2026):
+> **SUPERSEDED 2026-05-05.** The table previously in this section was
+> a draft. The authoritative TRC allocation -- captured verbatim from
+> the welcome email sent by `trc-support@google.com` -- now lives at
+> [`docs/tpu-trc-allocation.md`](./tpu-trc-allocation.md). Refer to
+> that file for the current quotas, zones, and tiers. The historical
+> notes below are retained for context only.
 
-| Resource | Quantity | Region | Tier |
-|---|---|---|---|
-| TPU v4 chips | 32 | `us-central2-b` | on-demand |
-| TPU v3 chips | 5 | `us-central1-{a,b,f}` | preemptible |
-| TPU v2 chips | 5 | `us-central1-{b,c,f}` | preemptible |
-| TPU v5litepod-8 | 1 | `us-west1-c` | preemptible |
-| TPU v6e-1 | 1 | `us-central1-a` | preemptible |
+Historical (May 2026 draft, do not rely on):
 
-We use the **on-demand v4 quota only**. The other (preemptible) slices
-are kept in reserve for ablation runs.
+- TPU v4 chips, 32, `us-central2-b`, on-demand.
+- v3, v2, v5litepod-8, v6e-1 preemptible slices listed but
+  superseded by the email-confirmed grant in
+  `docs/tpu-trc-allocation.md`.
+
+We use the **on-demand v4 quota** when available, and fall back to
+the **spot v4-32 in the same zone** (`us-central2-b`) per the
+recommendation in the TRC welcome email. See `tpu-trc-allocation.md`
+§3 for the full decision tree.
 
 **GCP project:** `ml-pipelines-315702`.
 
@@ -217,6 +223,48 @@ bash simultaneous-translation/scripts/tpu/ops.sh delete
    then re-exec.
 5. **TRC sharing obligation.** Outputs (paper, blog, OSS) must
    acknowledge the TPU Research Cloud per the grant terms.
+6. **`scan_layers` TypeError on torch_xla 2.9 -> 4h+ compile.**
+   Observed 2026-05-05 on a v4-32 spot canary: every scan call raised
+   `TypeError("scan_layers() got an unexpected keyword argument
+   'attention_mask'")` because the wrapper in
+   `src/model/scan_utils.py::_FusedScanLayer.forward` passes HF
+   kwargs to `scan_layers`, which in torch_xla 2.9 only accepts
+   `(layers, input_data, partition_fn=..., is_layer_pure=...)`. The
+   manual-loop fallback then unrolled 36+6 = 42 decoder layers into
+   the HLO and the backward compile took **4h 25min** wall instead
+   of the documented 25-min budget. Fix is drafted in
+   `.factory/memories.md` 2026-05-05 "scan_layers TypeError"
+   (`_KwargBoundLayer` closure pattern). Until applied, do **not**
+   budget less than 5h wall time for the first canary compile.
+7. **No persistent XLA cache configured.** When the training process
+   dies (spot preemption, OOM-kill, supervisor timeout), the
+   `startup_script.sh` while-loop restarts it but XLA tracing starts
+   from scratch because `XLA_PERSISTENT_CACHE_PATH` is unset. Every
+   restart pays the full compile tax. Fix is in
+   `.factory/memories.md` 2026-05-05 "XLA compile cache must be
+   configured".
+8. **HF dataset is packed-in-tarballs, not loose files.** The
+   `tiny-aya-translate/fleurs-tr-hi-mimi-encoded` dataset publishes
+   `packed/encoded_pt.tar.gz` and `packed/encoded_alignments.tar.gz`,
+   each containing a top-level `encoded/` directory. They must be
+   extracted with `tar -xzf ... --strip-components=1 -C
+   $DATA_DIR/encoded`. The `startup_script.sh` extraction block was
+   added 2026-05-05; before that fix the dataset code crashed with
+   `FileNotFoundError` because `_resolve` could not find `.pt` files
+   under the configured `encoded_dir`.
+9. **GCS `find_latest_checkpoint` raised on first run.** Original
+   code in `src/training/checkpointing.py::get_checkpoint_dirs`
+   called `gcsfs.GCSFileSystem().ls(base_dir)` without catching
+   `FileNotFoundError`, so `--resume auto` would crash on the very
+   first run when the prefix does not exist yet. Patched
+   2026-05-05 to catch and return `[]`.
+10. **Regional `IN_USE_ADDRESSES` quota = 8.** Every TRC region we
+    have TPU quota in caps external IPs at 8. v5e-64 and v6e-64 are
+    8-host slices needing 8 external IPs, so they fail in
+    `PROVISIONING -> SUSPENDING -> FAILED` even when TPU quota is
+    fine. v4-32 (4 hosts) and v4-64 (4 hosts on v4) fit under the
+    cap. See `docs/tpu-capacity-log.md` section 7.1 for workarounds
+    (`INTERNAL_IPS=1`, GCP quota bump, or pick a 4-host slice).
 
 ## 11. Out of scope (future work)
 
@@ -225,6 +273,64 @@ bash simultaneous-translation/scripts/tpu/ops.sh delete
 - v6e / v5e fallback paths
 - Spot preemption handling (not needed for on-demand v4)
 - Adding repo-wide `pyproject.toml` (this one covers training only)
+
+## 12. Live observation (tmux on the worker)
+
+`startup_script.sh` runs training inside `tmux new-session -d -s
+train ...`, owned by root. Every TPU worker therefore has an
+already-running tmux session named `train` that captures the
+supervisor loop and the live training stdout/stderr.
+
+**Interactive attach** (your terminal becomes the tmux client):
+
+```bash
+gcloud compute tpus tpu-vm ssh <node> \
+    --project=ml-pipelines-315702 --zone=<zone> \
+    --worker=0 \
+    -- -t 'sudo tmux attach -t train'
+```
+
+The `-- -t` is required so gcloud allocates a TTY. Detach with
+`Ctrl-b d` -- this leaves the session running.
+
+**Read-only attach** (cannot accidentally type into the live process):
+
+```bash
+gcloud compute tpus tpu-vm ssh <node> \
+    --project=ml-pipelines-315702 --zone=<zone> \
+    --worker=0 \
+    -- -t 'sudo tmux attach -t train -r'
+```
+
+**Non-interactive scrollback dump** (preferred for status checks
+inside scripts and droid sessions):
+
+```bash
+gcloud compute tpus tpu-vm ssh <node> \
+    --project=ml-pipelines-315702 --zone=<zone> \
+    --worker=0 \
+    --command='sudo tmux capture-pane -t train -p | tail -80'
+```
+
+**Tail `/tmp/train.log` directly** (equivalent for many cases):
+
+```bash
+gcloud compute tpus tpu-vm ssh <node> \
+    --project=ml-pipelines-315702 --zone=<zone> \
+    --worker=0 \
+    -- -t 'sudo tail -F /tmp/train.log'
+```
+
+Notes:
+- Multiple clients can attach to the same tmux session
+  concurrently without disturbing each other.
+- The session belongs to root because `startup-script` always runs
+  as root; every command above needs `sudo`.
+- Worker 0 is sufficient: SPMD means the training output is
+  identical across all 4 hosts of a v4-32. If you need worker N,
+  swap `--worker=0` for `--worker=N`.
+- The session name is configurable via the `TMUX_SESSION` env var
+  in `startup_script.sh`; default is `train`.
 
 ---
 

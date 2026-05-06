@@ -1,0 +1,98 @@
+# Canary config -- TPU v4-32 SPOT in us-central2-b.
+#
+# WHY THIS CONFIG EXISTS
+# ----------------------
+# When the on-demand v4 quota in us-central2-b is busy (the situation
+# that triggered this file) we fall back to the v4-32 spot quota in
+# the SAME zone, per the recommendation in the TRC welcome email
+# (archived in docs/tpu-trc-allocation.md). This canary retunes the
+# v5litepod-* canary for v4 hardware:
+#
+#   * v4 has 32 GiB HBM/chip (vs 16 GiB on v5e) -> we can double
+#     the per-chip batch from 1 to 2 without OOM-risk.
+#   * v4-32 has 16 chips (4 hosts * 4 chips) -- HALF of v4-64.
+#     Effective batch held constant at 64 = 2 * 2 * 16, vs the
+#     production target of 128 = 2 * 2 * 32 on v4-64.
+#   * save_every is reduced from 500 -> 100 because spot can be
+#     reclaimed at any time. Combined with --resume auto in
+#     startup_script.sh and WANDB_RESUME=allow (set automatically
+#     when is-spot=1), preempt -> resume costs at most 100 steps.
+#
+# Usage:
+#   TRC_PROFILE=v4-32-uc2b \
+#   QR_NAME=tinyaya-stage2-spot-canary-qr \
+#   NODE_ID=tinyaya-stage2-spot-canary \
+#   CONFIG_FILE=configs/stage2_tpu_canary_v4_spot.yaml \
+#   TPU_STRATEGY=fsdpv2_lora \
+#   PROBE_FIRST=1 \
+#     bash scripts/tpu/launch_spot.sh
+#
+# See also: docs/tpu-trc-allocation.md  (TRC quotas)
+#           configs/stage2_tpu_v4_spot.yaml  (5000-step Phase 5 sibling)
+
+backend: tpu
+
+# ---------------------------------------------------------------------
+# Data: identical to the v5e canary; the dataset is hardware-agnostic.
+# ---------------------------------------------------------------------
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+# ---------------------------------------------------------------------
+# Train: v4-32 spot retune.
+# Effective batch = batch_size * grad_accum * num_chips
+#                 = 2 * 2 * 16 = 64.
+# That is half the v4-64 production batch (128) but identical to the
+# v5litepod-16 canary, so loss-curve shape should match.
+# ---------------------------------------------------------------------
+train:
+  num_codebooks: 8
+  batch_size: 2          # was 1 on v5e canary; v4 has 32 GiB/chip
+  grad_accum: 2
+  max_steps: 200         # canary: prove the wiring, not the model
+  warmup_steps: 50
+  depth_chunk_size: 16
+  precision: bfloat16
+
+  # ---- TPU compile + memory optimisations (PLAN.md Phase 1 + 2) ----
+  # Flags identical to the v5e canary so behaviour transfers.
+  # See stage2_tpu_canary.yaml for the full rationale; in short:
+  # scan_layers fails _ensure_same_structure on our LoRA[0:33] +
+  # FullFT[34:35] split (issue #8612 / our ValueError),
+  # is_layer_pure=True crashes on FakeTensor (PyTorch #105485),
+  # and persistent cache is broken on TPU v4 + torch_xla 2.9
+  # (pytorch/xla #8930, #9094 -- both still open).
+  use_scan_layers: false
+  xla_grad_checkpoint: false
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+# Logging cadence with spot-aware save_every.
+# audio_every / val_every kept low so the canary uploads at least one
+# audio sample and runs at least one validation pass before exit.
+logging:
+  log_every: 10
+  save_every: 100        # was 50 on v5e canary; spot needs ckpts
+  audio_every: 100
+  val_every: 100
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-spot-canary
+  keep_last_n: 5         # spot-friendly: keep more, prune less
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v4-32-spot-canary

@@ -1,7 +1,19 @@
-"""Stage 2: Translation training (TR↔HI).
+"""Stage 2: translation training (TR <-> HI), single-host GPU.
 
-Trains on paired source+target audio, using prefix-LM concatenation.
-Loss computed only on target positions.
+WHY THIS EXISTS
+---------------
+Pre-TPU Stage-2 driver. Trains the composite on paired
+source/target audio using prefix-LM concatenation, with the loss
+masked to target positions only.
+
+Superseded for production by ``scripts/train_hierarchical.py``
+which adds the backend abstraction and TPU SPMD support. We keep
+this file around as a reference single-GPU implementation -- it is
+shorter, easier to step through in a debugger, and doesn't require
+the ``torch_xla`` wheel.
+
+Loss is computed only on target positions (the tail half of each
+sample, marked by ``loss_mask``).
 
 Usage:
     python scripts/train_stage2.py --data_dir data/stage2 --max_steps 1000 \
@@ -16,18 +28,19 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.model.backbone import TinyAyaBackbone
-from src.model.lora_setup import apply_lora, register_embedding_grad_mask, get_parameter_groups
-from src.data.dataset import TranslationDataset
 from src.data.collator import InterleavedCollator
+from src.data.dataset import TranslationDataset
+from src.model.backbone import TinyAyaBackbone
+from src.model.lora_setup import apply_lora, get_parameter_groups, register_embedding_grad_mask
 from src.training.trainer import Trainer
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_dir", type=str, default="data/stage2")
-    parser.add_argument("--checkpoint", type=str, default=None,
-                        help="Stage 1 checkpoint to resume from")
+    parser.add_argument(
+        "--checkpoint", type=str, default=None, help="Stage 1 checkpoint to resume from"
+    )
     parser.add_argument("--max_steps", type=int, default=1000)
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--accum_steps", type=int, default=1)
@@ -37,8 +50,9 @@ def main():
     parser.add_argument("--lr_audio_embed", type=float, default=5e-4)
     parser.add_argument("--lr_text_embed", type=float, default=5e-4)
     parser.add_argument("--lr_audio_head", type=float, default=5e-4)
-    parser.add_argument("--text_weight", type=float, default=0.1,
-                        help="Text is auxiliary in translation")
+    parser.add_argument(
+        "--text_weight", type=float, default=0.1, help="Text is auxiliary in translation"
+    )
     parser.add_argument("--audio_weight", type=float, default=1.0)
     parser.add_argument("--save_dir", type=str, default="checkpoints/stage2")
     parser.add_argument("--log_every", type=int, default=5)
@@ -61,7 +75,8 @@ def main():
         print(f"\n=== Loading checkpoint: {args.checkpoint} ===")
         ckpt = torch.load(
             Path(args.checkpoint) / "training_state.pt",
-            map_location="cpu", weights_only=False,
+            map_location="cpu",
+            weights_only=False,
         )
         backbone.load_state_dict(ckpt["model_state_dict"], strict=False)
         print(f"  Loaded from step {ckpt['step']}")
@@ -79,8 +94,12 @@ def main():
 
     collator = InterleavedCollator()
     dataloader = torch.utils.data.DataLoader(
-        dataset, batch_size=args.batch_size, shuffle=True,
-        collate_fn=collator, num_workers=0, pin_memory=True,
+        dataset,
+        batch_size=args.batch_size,
+        shuffle=True,
+        collate_fn=collator,
+        num_workers=0,
+        pin_memory=True,
     )
 
     # === Optimizer ===

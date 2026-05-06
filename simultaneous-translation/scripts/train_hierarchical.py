@@ -1,13 +1,41 @@
 """Train TinyAyaMoshiComposite with hierarchical codebook generation.
 
-Dual-mode:
-  --dataset_mode memory    (50-pair debug, original TranslationDataset)
-  --dataset_mode streaming (scale run, StreamingTranslationDataset)
+WHY THIS EXISTS
+---------------
+This is the canonical Stage 2 training entry point. It runs in three
+mutually exclusive modes:
 
-Reads a YAML config (configs/stage2_scale.yaml) as the source of truth; every
-field stays overridable via CLI flags (additive argparse).
+* **GPU single-process** -- the script just runs (no ``torchrun``).
+* **GPU multi-process** -- launch with ``torchrun`` for DDP. The
+  ``backend.init_distributed()`` call detects this via env vars.
+* **TPU SPMD** -- one Python process per host (each host drives all
+  4 chips). The ``backend.init_distributed()`` call sets up the XLA
+  ``Mesh`` and the SPMD partitioner.
 
-Supports single-GPU and multi-GPU (DDP via torchrun) training.
+GPU vs TPU at a glance
+----------------------
+* On GPU we move data to ``device`` and call ``model(...)``. PyTorch
+  schedules the kernels and CUDA streams hide latency.
+* On TPU we *also* call ``model(...)`` -- but the first time XLA
+  *traces* the whole forward+backward, *compiles* it to TPU machine
+  code, and only then *executes* it. The compiled binary is reused
+  for every subsequent step, so the first step is slow (minutes) and
+  the rest are fast.
+* On TPU we additionally call ``backend.mark_sharding(...)`` on the
+  inputs so the SPMD partitioner knows the batch dimension is
+  sharded across chips. GPU analogue: ``DistributedSampler`` (but
+  here SPMD does it without per-rank Python state).
+
+Config precedence
+-----------------
+YAML (``--config``) provides the defaults; CLI flags override; the
+``DEFAULTS`` dict at the top of the file is the ultimate fallback.
+Two new keys plumb the scan_layers / grad-checkpoint feature flags:
+
+* ``train.use_scan_layers`` (bool) -- swap layer stacks for the
+  ``scan_utils`` proxy. See PLAN.md Phase 1.
+* ``train.xla_grad_checkpoint`` (bool) -- per-layer
+  ``torch.utils.checkpoint``. See PLAN.md Phase 2.
 """
 
 import argparse
@@ -26,16 +54,18 @@ from torch.utils.data.distributed import DistributedSampler
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.backend import get_backend
-
 from src.data.collator import InterleavedCollator
 from src.data.dataset import StreamingTranslationDataset, TranslationDataset
 from src.model.backbone import TinyAyaBackbone
 from src.model.composite import TinyAyaMoshiComposite
 from src.model.lora_setup import apply_lora
-from src.training.checkpointing import load_checkpoint, prune_checkpoints, push_checkpoint_to_hub, save_checkpoint
+from src.training.checkpointing import (
+    prune_checkpoints,
+    push_checkpoint_to_hub,
+    save_checkpoint,
+)
 from src.training.scheduler import WarmupCosineScheduler
 from src.training.translation_loss import compute_hierarchical_translation_loss
-
 
 # ---------------------------------------------------------------------------
 # config loading
@@ -43,23 +73,56 @@ from src.training.translation_loss import compute_hierarchical_translation_loss
 
 DEFAULTS = {
     "backend": "auto",
-    "data": {"train_split": None, "val_split": None, "encoded_dir": None,
-             "max_frames": 300, "audio_frame_rate": 12.5,
-             "num_workers": 4, "pin_memory": True},
-    "train": {"num_codebooks": 8, "batch_size": 1, "grad_accum": 1,
-              "max_steps": 3000, "warmup_steps": 200, "min_lr_ratio": 0.1,
-              "depth_chunk_size": 16, "precision": "bfloat16",
-              "max_grad_norm": 1.0, "weight_decay": 0.01,
-              "adam_beta1": 0.9, "adam_beta2": 0.999, "adam_eps": 1e-8},
+    "data": {
+        "train_split": None,
+        "val_split": None,
+        "encoded_dir": None,
+        "max_frames": 300,
+        "audio_frame_rate": 12.5,
+        "num_workers": 4,
+        "pin_memory": True,
+    },
+    "train": {
+        "num_codebooks": 8,
+        "batch_size": 1,
+        "grad_accum": 1,
+        "max_steps": 3000,
+        "warmup_steps": 200,
+        "min_lr_ratio": 0.1,
+        "depth_chunk_size": 16,
+        "precision": "bfloat16",
+        "max_grad_norm": 1.0,
+        "weight_decay": 0.01,
+        "adam_beta1": 0.9,
+        "adam_beta2": 0.999,
+        "adam_eps": 1e-8,
+        # TPU-only flags. Both safe to leave True on GPU: the
+        # scan proxy falls back to a plain loop, and the grad
+        # checkpoint shim falls back to a direct call.
+        "use_scan_layers": False,
+        "xla_grad_checkpoint": False,
+    },
     "loss": {"text_weight": 0.1, "audio_weight": 1.0},
-    "optim": {"lr_lora": 1.5e-4, "lr_full_ft": 5e-5, "lr_projection": 5e-4,
-              "lr_depth": 2.5e-4, "lr_audio_embed": 5e-4, "lr_text_embed": 5e-4},
-    "logging": {"log_every": 20, "save_every": 1000, "audio_every": 1000,
-                "val_every": 1000, "save_dir": "checkpoints/stage2_scale",
-                "wandb_project": "tinyaya-s2s",
-                "wandb_run_name": "stage2_scale",
-                "use_wandb": False,
-                "push_to_hub": False, "hub_repo_id": None},
+    "optim": {
+        "lr_lora": 1.5e-4,
+        "lr_full_ft": 5e-5,
+        "lr_projection": 5e-4,
+        "lr_depth": 2.5e-4,
+        "lr_audio_embed": 5e-4,
+        "lr_text_embed": 5e-4,
+    },
+    "logging": {
+        "log_every": 20,
+        "save_every": 1000,
+        "audio_every": 1000,
+        "val_every": 1000,
+        "save_dir": "checkpoints/stage2_scale",
+        "wandb_project": "tinyaya-s2s",
+        "wandb_run_name": "stage2_scale",
+        "use_wandb": False,
+        "push_to_hub": False,
+        "hub_repo_id": None,
+    },
 }
 
 
@@ -107,7 +170,7 @@ def freeze_depth_internals(model):
         else:
             param.requires_grad = False
             frozen += param.numel()
-    print(f"Depth decoder: frozen {frozen/1e6:.0f}M, trainable I/O {kept/1e6:.0f}M")
+    print(f"Depth decoder: frozen {frozen / 1e6:.0f}M, trainable I/O {kept / 1e6:.0f}M")
 
 
 def get_param_groups(model, optim_cfg):
@@ -137,7 +200,7 @@ def get_param_groups(model, optim_cfg):
     print("\n=== Parameter Groups ===")
     for g in result:
         n = sum(p.numel() for p in g["params"])
-        print(f"  {g['name']}: {len(g['params'])} tensors, {n/1e6:.1f}M, lr={g['lr']}")
+        print(f"  {g['name']}: {len(g['params'])} tensors, {n / 1e6:.1f}M, lr={g['lr']}")
     return result
 
 
@@ -147,8 +210,16 @@ def get_param_groups(model, optim_cfg):
 
 
 @torch.no_grad()
-def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
-                          sample_idx=0, max_target_frames=80, backend=None):
+def generate_audio_sample(
+    model,
+    dataset,
+    mimi_encoder,
+    device,
+    num_codebooks,
+    sample_idx=0,
+    max_target_frames=80,
+    backend=None,
+):
     model.eval()
     sample = dataset[sample_idx]
     src_codes_all = sample["audio_codes"]
@@ -157,16 +228,22 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
 
     src_cb0 = src_codes_all[0, :src_len].unsqueeze(0).to(device)
     generated_cb0 = src_cb0.clone()
-    text_ids = torch.full((1, src_len), TinyAyaBackbone.ZERO_PADDING,
-                          dtype=torch.long, device=device)
+    text_ids = torch.full(
+        (1, src_len), TinyAyaBackbone.ZERO_PADDING, dtype=torch.long, device=device
+    )
 
     all_generated = []
     for _ in range(max_target_frames):
         mask = torch.ones(1, generated_cb0.shape[1], dtype=torch.long, device=device)
-        autocast = backend.autocast_context(dtype=torch.bfloat16) if backend else torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        autocast = (
+            backend.autocast_context(dtype=torch.bfloat16)
+            if backend
+            else torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        )
         with autocast:
-            backbone_out = model.backbone(text_ids=text_ids, audio_codes=generated_cb0,
-                                          attention_mask=mask)
+            backbone_out = model.backbone(
+                text_ids=text_ids, audio_codes=generated_cb0, attention_mask=mask
+            )
             projected = model.projection(backbone_out["hidden_states"])
             ctx = projected[:, -1:, :]
             ctx_expanded = ctx.expand(1, num_codebooks, -1).contiguous()
@@ -175,8 +252,10 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
             frame = []
             for cb_idx in range(num_codebooks):
                 depth_out = model.depth_decoder(
-                    input_ids=depth_input, last_hidden_state=ctx_expanded,
-                    use_cache=False, return_dict=True,
+                    input_ids=depth_input,
+                    last_hidden_state=ctx_expanded,
+                    use_cache=False,
+                    return_dict=True,
                 )
                 tok = depth_out.logits[0, cb_idx, :].argmax(dim=-1)
                 frame.append(tok.cpu())
@@ -190,11 +269,11 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
         text_ids = torch.cat([text_ids, text_pad], dim=1)
 
     gen_codes = torch.stack(all_generated, dim=1)  # [CB, T]
-    gt_cb0 = src_codes_all[0, src_len:src_len + gen_codes.shape[1]]
+    gt_cb0 = src_codes_all[0, src_len : src_len + gen_codes.shape[1]]
     cb0_acc = (gen_codes[0] == gt_cb0).float().mean().item() if len(gt_cb0) > 0 else 0.0
 
     src_full = src_codes_all[:, :src_len]
-    tgt_full = src_codes_all[:, src_len:src_len + tgt_len]
+    tgt_full = src_codes_all[:, src_len : src_len + tgt_len]
     model.train()
     return {
         "source_wav": mimi_encoder.decode(src_full).numpy(),
@@ -210,8 +289,17 @@ def generate_audio_sample(model, dataset, mimi_encoder, device, num_codebooks,
 
 
 @torch.no_grad()
-def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
-                   loss_cfg, *, is_ddp=False, backend=None) -> dict:
+def run_validation(
+    model,
+    val_loader,
+    device,
+    num_codebooks,
+    depth_chunk_size,
+    loss_cfg,
+    *,
+    is_ddp=False,
+    backend=None,
+) -> dict:
     model.eval()
     sums = {"loss": 0.0, "text": 0.0, "audio": 0.0}
     per_cb_sum = torch.zeros(num_codebooks, device=device)
@@ -225,16 +313,28 @@ def run_validation(model, val_loader, device, num_codebooks, depth_chunk_size,
         mask = batch["attention_mask"].to(device)
         loss_mask = batch["loss_mask"].to(device)
 
-        autocast = backend.autocast_context(dtype=torch.bfloat16) if backend else torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        autocast = (
+            backend.autocast_context(dtype=torch.bfloat16)
+            if backend
+            else torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        )
         with autocast:
-            output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
-                           full_audio_codes=all_codes[:, :num_codebooks, :],
-                           depth_chunk_size=depth_chunk_size)
+            output = model(
+                text_ids=text_ids,
+                audio_codes=cb0,
+                attention_mask=mask,
+                full_audio_codes=all_codes[:, :num_codebooks, :],
+                depth_chunk_size=depth_chunk_size,
+            )
             text_logits, audio_logits, _ = output
             audio_targets = all_codes[:, :num_codebooks, :]
             losses = compute_hierarchical_translation_loss(
-                text_logits, audio_logits,
-                text_ids, audio_targets, mask, loss_mask,
+                text_logits,
+                audio_logits,
+                text_ids,
+                audio_targets,
+                mask,
+                loss_mask,
                 text_weight=loss_cfg["text_weight"],
                 audio_weight=loss_cfg["audio_weight"],
             )
@@ -313,11 +413,9 @@ def build_parser():
     p.add_argument("--save_dir", type=str, default=None)
     p.add_argument("--wandb_project", type=str, default=None)
     p.add_argument("--wandb_run_name", type=str, default=None)
-    p.add_argument("--use_wandb", type=lambda s: s.lower() in ("1", "true", "yes"),
-                   default=None)
+    p.add_argument("--use_wandb", type=lambda s: s.lower() in ("1", "true", "yes"), default=None)
 
-    p.add_argument("--push_to_hub", type=lambda s: s.lower() in ("1", "true", "yes"),
-                   default=None)
+    p.add_argument("--push_to_hub", type=lambda s: s.lower() in ("1", "true", "yes"), default=None)
     p.add_argument("--hub_repo_id", type=str, default=None)
 
     p.add_argument("--backend", type=str, default=None, choices=["auto", "gpu", "tpu"])
@@ -327,8 +425,11 @@ def build_parser():
 
 def main():
     args = build_parser().parse_args()
-    overrides = {k: v for k, v in vars(args).items()
-                 if k not in ("config", "dataset_mode", "data_dir", "resume")}
+    overrides = {
+        k: v
+        for k, v in vars(args).items()
+        if k not in ("config", "dataset_mode", "data_dir", "resume")
+    }
     cfg = load_config(args.config, overrides)
 
     # ---- distributed init (GPU or TPU)
@@ -353,15 +454,26 @@ def main():
     # ---- model
     if is_main:
         print("\n=== Building composite model ===")
-    model = TinyAyaMoshiComposite(num_codebooks=num_codebooks)
+    use_scan = bool(cfg["train"].get("use_scan_layers", False))
+    use_xla_ckpt = bool(cfg["train"].get("xla_grad_checkpoint", False))
+    model = TinyAyaMoshiComposite(
+        num_codebooks=num_codebooks,
+        use_scan_layers=use_scan,
+        xla_grad_checkpoint=use_xla_ckpt,
+    )
     model.backbone = apply_lora(model.backbone, r=16)
     freeze_depth_internals(model)
     for p in model.projection.parameters():
         p.requires_grad = True
     model = model.to(device)
 
-    # Gradient checkpointing: for TPU, wrap_model enables it before FSDPv2 (required order)
-    # For GPU, enable it here before DDP
+    # Gradient checkpointing strategy:
+    #   * GPU: enable HF's per-layer grad checkpoint here, before DDP
+    #     wrapping. This is the standard HF Trainer pattern.
+    #   * TPU: do NOT call HF's gradient_checkpointing_enable -- in
+    #     torch_xla 2.9 it raises from torch._get_device_module("xla").
+    #     We use the ``xla_grad_checkpoint`` flag instead, which routes
+    #     through scan_utils.
     if cfg.get("backend", "auto") != "tpu":
         model.backbone.gradient_checkpointing_enable()
     model = backend.wrap_model(model)
@@ -372,8 +484,10 @@ def main():
     total = sum(p.numel() for p in unwrapped.parameters())
     trainable = sum(p.numel() for p in unwrapped.parameters() if p.requires_grad)
     if is_main:
-        print(f"Total {total/1e9:.2f}B, trainable {trainable/1e6:.0f}M "
-              f"({100*trainable/total:.1f}%)")
+        print(
+            f"Total {total / 1e9:.2f}B, trainable {trainable / 1e6:.0f}M "
+            f"({100 * trainable / total:.1f}%)"
+        )
 
     # ---- data
     if is_main:
@@ -383,20 +497,25 @@ def main():
         if not cfg["data"]["train_split"]:
             raise ValueError("train_split required in streaming mode")
         train_ds = StreamingTranslationDataset(
-            cfg["data"]["train_split"], unwrapped.backbone.tokenizer,
-            max_frames=max_frames, audio_frame_rate=cfg["data"]["audio_frame_rate"],
+            cfg["data"]["train_split"],
+            unwrapped.backbone.tokenizer,
+            max_frames=max_frames,
+            audio_frame_rate=cfg["data"]["audio_frame_rate"],
             encoded_dir=cfg["data"]["encoded_dir"],
         )
         val_ds = None
         if cfg["data"]["val_split"] and Path(cfg["data"]["val_split"]).exists():
             val_ds = StreamingTranslationDataset(
-                cfg["data"]["val_split"], unwrapped.backbone.tokenizer,
-                max_frames=max_frames, audio_frame_rate=cfg["data"]["audio_frame_rate"],
+                cfg["data"]["val_split"],
+                unwrapped.backbone.tokenizer,
+                max_frames=max_frames,
+                audio_frame_rate=cfg["data"]["audio_frame_rate"],
                 encoded_dir=cfg["data"]["encoded_dir"],
             )
     else:
-        train_ds = TranslationDataset(args.data_dir, unwrapped.backbone.tokenizer,
-                                      max_frames=max_frames)
+        train_ds = TranslationDataset(
+            args.data_dir, unwrapped.backbone.tokenizer, max_frames=max_frames
+        )
         val_ds = None
 
     num_workers = cfg["data"]["num_workers"]
@@ -416,19 +535,24 @@ def main():
         val_sampler = None
 
     train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=cfg["train"]["batch_size"],
+        train_ds,
+        batch_size=cfg["train"]["batch_size"],
         shuffle=(train_sampler is None),
         sampler=train_sampler,
-        collate_fn=collator, num_workers=num_workers,
+        collate_fn=collator,
+        num_workers=num_workers,
         pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
         persistent_workers=num_workers > 0 and not is_tpu,
     )
     val_loader = None
     if val_ds is not None:
         val_loader = torch.utils.data.DataLoader(
-            val_ds, batch_size=cfg["train"]["batch_size"], shuffle=False,
+            val_ds,
+            batch_size=cfg["train"]["batch_size"],
+            shuffle=False,
             sampler=val_sampler,
-            collate_fn=collator, num_workers=num_workers,
+            collate_fn=collator,
+            num_workers=num_workers,
             pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
             persistent_workers=num_workers > 0 and not is_tpu,
         )
@@ -437,29 +561,35 @@ def main():
     if is_main:
         print("\n=== Loading Mimi for audio monitoring ===")
     from src.data.mimi_encoder import MimiEncoder
+
     mimi_device = "cpu" if is_tpu else device
     mimi_encoder = MimiEncoder(device=mimi_device)
 
     # ---- optimizer + scheduler
     param_groups = get_param_groups(unwrapped, cfg["optim"])
     optimizer = torch.optim.AdamW(
-        param_groups, weight_decay=cfg["train"]["weight_decay"],
+        param_groups,
+        weight_decay=cfg["train"]["weight_decay"],
         betas=(cfg["train"]["adam_beta1"], cfg["train"]["adam_beta2"]),
         eps=cfg["train"]["adam_eps"],
     )
     scheduler = WarmupCosineScheduler(
-        optimizer, warmup_steps=cfg["train"]["warmup_steps"],
+        optimizer,
+        warmup_steps=cfg["train"]["warmup_steps"],
         total_steps=cfg["train"]["max_steps"],
         min_lr_ratio=cfg["train"]["min_lr_ratio"],
     )
 
     from src.training.checkpointing import find_latest_checkpoint, load_checkpoint_with_backend
+
     start_step = 0
     resume_dir = args.resume
     if resume_dir == "auto":
         resume_dir = find_latest_checkpoint(cfg["logging"]["save_dir"])
     if resume_dir:
-        start_step = load_checkpoint_with_backend(unwrapped, optimizer, scheduler, resume_dir, backend)
+        start_step = load_checkpoint_with_backend(
+            unwrapped, optimizer, scheduler, resume_dir, backend
+        )
         if is_main:
             print(f"Resumed at step {start_step}")
 
@@ -467,9 +597,12 @@ def main():
     use_wandb = cfg["logging"]["use_wandb"]
     if use_wandb and is_main:
         import wandb
-        wandb.init(project=cfg["logging"]["wandb_project"],
-                   name=cfg["logging"]["wandb_run_name"],
-                   config=cfg)
+
+        wandb.init(
+            project=cfg["logging"]["wandb_project"],
+            name=cfg["logging"]["wandb_run_name"],
+            config=cfg,
+        )
 
     # ---- hub push config
     push_to_hub = cfg["logging"]["push_to_hub"] and is_main
@@ -499,8 +632,10 @@ def main():
     audio_w = cfg["loss"]["audio_weight"]
 
     if is_main:
-        print(f"\n=== Training: {max_steps} steps, accum={grad_accum}, "
-              f"batch={cfg['train']['batch_size']} ===")
+        print(
+            f"\n=== Training: {max_steps} steps, accum={grad_accum}, "
+            f"batch={cfg['train']['batch_size']} ==="
+        )
     model.train()
     optimizer.zero_grad()
 
@@ -512,9 +647,7 @@ def main():
         micro_per_cb = torch.zeros(num_codebooks)
         for micro in range(grad_accum):
             sync_ctx = (
-                contextlib.nullcontext()
-                if micro == grad_accum - 1
-                else backend.no_sync(model)
+                contextlib.nullcontext() if micro == grad_accum - 1 else backend.no_sync(model)
             )
             with sync_ctx:
                 try:
@@ -539,15 +672,24 @@ def main():
                     backend.mark_sharding(loss_mask, ("fsdp", None))
 
                 with backend.autocast_context(dtype=torch.bfloat16):
-                    output = model(text_ids=text_ids, audio_codes=cb0, attention_mask=mask,
-                                   full_audio_codes=all_codes[:, :num_codebooks, :],
-                                   depth_chunk_size=depth_chunk)
+                    output = model(
+                        text_ids=text_ids,
+                        audio_codes=cb0,
+                        attention_mask=mask,
+                        full_audio_codes=all_codes[:, :num_codebooks, :],
+                        depth_chunk_size=depth_chunk,
+                    )
                     text_logits, audio_logits, _ = output
                     audio_targets = all_codes[:, :num_codebooks, :]
                     losses = compute_hierarchical_translation_loss(
-                        text_logits, audio_logits,
-                        text_ids, audio_targets, mask, loss_mask,
-                        text_weight=text_w, audio_weight=audio_w,
+                        text_logits,
+                        audio_logits,
+                        text_ids,
+                        audio_targets,
+                        mask,
+                        loss_mask,
+                        text_weight=text_w,
+                        audio_weight=audio_w,
                     )
                 loss = losses["loss"] / grad_accum
                 loss.backward()
@@ -558,7 +700,8 @@ def main():
 
         # macro-step
         grad_norm = torch.nn.utils.clip_grad_norm_(
-            model.parameters(), cfg["train"]["max_grad_norm"])
+            model.parameters(), cfg["train"]["max_grad_norm"]
+        )
         if not torch.isfinite(torch.tensor(micro_loss_sum / grad_accum)):
             print(f"!!! Non-finite loss at step {step}. Aborting.")
             sys.exit(2)
@@ -578,23 +721,27 @@ def main():
 
         # ---- logging
         if step % log_every == 0:
-            avg = {k: (v / log_every if k != "per_cb" else (v / log_every).tolist())
-                   for k, v in running.items()}
+            avg = {
+                k: (v / log_every if k != "per_cb" else (v / log_every).tolist())
+                for k, v in running.items()
+            }
             now = time.time()
             step_time = (now - t_last) / log_every
             t_last = now
-            lrs = {f"train/lr_{g['name']}": g['lr'] for g in optimizer.param_groups
-                   if 'name' in g}
+            lrs = {f"train/lr_{g['name']}": g["lr"] for g in optimizer.param_groups if "name" in g}
             mem_info = backend.get_memory_info()
             peak_gb = mem_info["max_allocated_gb"] if mem_info else 0
             alloc_gb = mem_info["allocated_gb"] if mem_info else 0
             if is_main:
-                print(f"step {step:6d} | loss {avg['loss']:.4f} | "
-                      f"text {avg['text']:.4f} audio {avg['audio']:.4f} | "
-                      f"grad {grad_norm:.3f} | {step_time:.2f}s/step | "
-                      f"peak {peak_gb:.1f}G")
+                print(
+                    f"step {step:6d} | loss {avg['loss']:.4f} | "
+                    f"text {avg['text']:.4f} audio {avg['audio']:.4f} | "
+                    f"grad {grad_norm:.3f} | {step_time:.2f}s/step | "
+                    f"peak {peak_gb:.1f}G"
+                )
             if use_wandb and is_main:
                 import wandb
+
                 log = {
                     "train/loss": avg["loss"],
                     "train/text_loss": avg["text"],
@@ -608,8 +755,7 @@ def main():
                 for i, v in enumerate(avg["per_cb"]):
                     log[f"train/per_codebook_loss_{i}"] = v
                 wandb.log(log, step=step)
-            running = {"loss": 0.0, "text": 0.0, "audio": 0.0,
-                       "per_cb": torch.zeros(num_codebooks)}
+            running = {"loss": 0.0, "text": 0.0, "audio": 0.0, "per_cb": torch.zeros(num_codebooks)}
             if mem_info:
                 torch.cuda.reset_peak_memory_stats()
             backend.sync()
@@ -617,10 +763,17 @@ def main():
         # ---- audio demo
         if audio_every and step % audio_every == 0 and is_main:
             try:
-                r = generate_audio_sample(unwrapped, train_ds, mimi_encoder, device,
-                                          num_codebooks, sample_idx=0,
-                                          max_target_frames=80, backend=backend)
-                print(f"  demo cb0_acc={r['cb0_accuracy']*100:.1f}%")
+                r = generate_audio_sample(
+                    unwrapped,
+                    train_ds,
+                    mimi_encoder,
+                    device,
+                    num_codebooks,
+                    sample_idx=0,
+                    max_target_frames=80,
+                    backend=backend,
+                )
+                print(f"  demo cb0_acc={r['cb0_accuracy'] * 100:.1f}%")
                 ad = save_dir / "audio_samples" / f"step_{step:06d}"
                 ad.mkdir(parents=True, exist_ok=True)
                 sf.write(ad / "source.wav", r["source_wav"], 24000)
@@ -628,12 +781,16 @@ def main():
                 sf.write(ad / "generated.wav", r["generated_wav"], 24000)
                 if use_wandb:
                     import wandb
-                    wandb.log({
-                        "audio/source": wandb.Audio(r["source_wav"], sample_rate=24000),
-                        "audio/target_gt": wandb.Audio(r["target_gt_wav"], sample_rate=24000),
-                        "audio/generated": wandb.Audio(r["generated_wav"], sample_rate=24000),
-                        "audio/cb0_accuracy_train": r["cb0_accuracy"],
-                    }, step=step)
+
+                    wandb.log(
+                        {
+                            "audio/source": wandb.Audio(r["source_wav"], sample_rate=24000),
+                            "audio/target_gt": wandb.Audio(r["target_gt_wav"], sample_rate=24000),
+                            "audio/generated": wandb.Audio(r["generated_wav"], sample_rate=24000),
+                            "audio/cb0_accuracy_train": r["cb0_accuracy"],
+                        },
+                        step=step,
+                    )
             except Exception as e:
                 print(f"  demo failed: {e}")
 
@@ -641,12 +798,21 @@ def main():
         if val_loader is not None and val_every and step % val_every == 0:
             if is_main:
                 print(f"  running validation at step {step}...")
-            val = run_validation(model, val_loader, device, num_codebooks,
-                                 depth_chunk, cfg["loss"], is_ddp=False, backend=backend)
+            val = run_validation(
+                model,
+                val_loader,
+                device,
+                num_codebooks,
+                depth_chunk,
+                cfg["loss"],
+                is_ddp=False,
+                backend=backend,
+            )
             if is_main:
-                print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc']*100:.1f}%")
+                print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc'] * 100:.1f}%")
             if use_wandb and is_main:
                 import wandb
+
                 log = {k: v for k, v in val.items() if k != "val/per_codebook_loss"}
                 for i, v in enumerate(val["val/per_codebook_loss"]):
                     log[f"val/per_codebook_loss_{i}"] = v
@@ -656,16 +822,25 @@ def main():
                 best_dir = save_dir / "best_by_val"
                 if best_dir.exists():
                     import shutil
+
                     shutil.rmtree(best_dir)
-                save_checkpoint(unwrapped, optimizer, scheduler, step, str(best_dir),
-                                extra_state={"best_val_loss": best_val,
-                                             "config": cfg})
+                save_checkpoint(
+                    unwrapped,
+                    optimizer,
+                    scheduler,
+                    step,
+                    str(best_dir),
+                    extra_state={"best_val_loss": best_val, "config": cfg},
+                )
                 print(f"  * new best val — saved to {best_dir}")
                 if push_to_hub and hub_repo_id:
                     try:
-                        push_checkpoint_to_hub(str(best_dir), hub_repo_id,
-                                               commit_message=f"best val {best_val:.4f} @ step {step}",
-                                               token=hub_token)
+                        push_checkpoint_to_hub(
+                            str(best_dir),
+                            hub_repo_id,
+                            commit_message=f"best val {best_val:.4f} @ step {step}",
+                            token=hub_token,
+                        )
                     except Exception as e:
                         print(f"  hub push failed: {e}")
             backend.barrier()
@@ -674,14 +849,15 @@ def main():
         if save_every and step % save_every == 0:
             if is_main:
                 d = save_dir / f"step_{step:06d}"
-                save_checkpoint(unwrapped, optimizer, scheduler, step, str(d),
-                                extra_state={"config": cfg})
+                save_checkpoint(
+                    unwrapped, optimizer, scheduler, step, str(d), extra_state={"config": cfg}
+                )
                 prune_checkpoints(str(save_dir), keep_last=5, keep_best="best_by_val")
                 if push_to_hub and hub_repo_id:
                     try:
-                        push_checkpoint_to_hub(str(d), hub_repo_id,
-                                               commit_message=f"step {step}",
-                                               token=hub_token)
+                        push_checkpoint_to_hub(
+                            str(d), hub_repo_id, commit_message=f"step {step}", token=hub_token
+                        )
                     except Exception as e:
                         print(f"  hub push failed: {e}")
             backend.barrier()
@@ -689,18 +865,25 @@ def main():
     # ---- final save
     if is_main:
         d = save_dir / f"step_{step:06d}"
-        save_checkpoint(unwrapped, optimizer, scheduler, step, str(d),
-                        extra_state={"config": cfg, "final": True})
-        print(f"\nTraining complete: {step} steps in {(time.time()-t0)/60:.1f} min")
+        save_checkpoint(
+            unwrapped,
+            optimizer,
+            scheduler,
+            step,
+            str(d),
+            extra_state={"config": cfg, "final": True},
+        )
+        print(f"\nTraining complete: {step} steps in {(time.time() - t0) / 60:.1f} min")
         if push_to_hub and hub_repo_id:
             try:
-                push_checkpoint_to_hub(str(d), hub_repo_id,
-                                       commit_message=f"final step {step}",
-                                       token=hub_token)
+                push_checkpoint_to_hub(
+                    str(d), hub_repo_id, commit_message=f"final step {step}", token=hub_token
+                )
             except Exception as e:
                 print(f"  hub push failed: {e}")
     if use_wandb and is_main:
         import wandb
+
         wandb.finish()
 
     backend.barrier()

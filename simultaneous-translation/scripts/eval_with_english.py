@@ -1,8 +1,19 @@
-"""Evaluate translation with English reference audio.
+"""Evaluate translation alongside an English reference wav.
 
-For each sample, outputs 3 audio files:
-1. Source (e.g., Turkish input)
-2. Model-generated target (e.g., Hindi translation)
+WHY THIS EXISTS
+---------------
+A side-by-side qualitative listener: source / model output /
+English reference. Useful when the trained TR<->HI direction
+sounds plausible but we want to confirm intelligibility against
+a known-good English baseline (the FLEURS triplet provides EN
+parallel audio for free).
+
+GPU-only.
+
+For each sample, outputs three audio files:
+
+1. Source (e.g. Turkish input).
+2. Model-generated target (e.g. Hindi translation).
 3. English reference (same sentence from FLEURS English)
 
 Usage:
@@ -13,15 +24,15 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
-import soundfile as sf
 import numpy as np
+import soundfile as sf
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.data.mimi_encoder import MimiEncoder
 from src.model.backbone import TinyAyaBackbone
 from src.model.lora_setup import apply_lora, register_embedding_grad_mask
-from src.data.mimi_encoder import MimiEncoder
 
 
 def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
@@ -30,19 +41,23 @@ def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
     T_src = src.shape[1]
     generated = src.clone()
     text_ids = torch.full(
-        (1, T_src), TinyAyaBackbone.ZERO_PADDING,
-        dtype=torch.long, device=device,
+        (1, T_src),
+        TinyAyaBackbone.ZERO_PADDING,
+        dtype=torch.long,
+        device=device,
     )
 
     with torch.no_grad():
-        for step in range(max_new_tokens):
+        for _step in range(max_new_tokens):
             mask = torch.ones(1, generated.shape[1], dtype=torch.long, device=device)
             with torch.amp.autocast("cuda", dtype=torch.bfloat16):
                 output = model(text_ids=text_ids, audio_codes=generated, attention_mask=mask)
             logits = output["audio_logits"][0, -1, :]
             next_token = logits.argmax(dim=-1).unsqueeze(0).unsqueeze(0)
             generated = torch.cat([generated, next_token], dim=1)
-            text_pad = torch.full((1, 1), TinyAyaBackbone.ZERO_PADDING, dtype=torch.long, device=device)
+            text_pad = torch.full(
+                (1, 1), TinyAyaBackbone.ZERO_PADDING, dtype=torch.long, device=device
+            )
             text_ids = torch.cat([text_ids, text_pad], dim=1)
 
     return generated[0, T_src:]
@@ -64,7 +79,9 @@ def main():
     backbone = TinyAyaBackbone(load_in_bf16=True)
     backbone = apply_lora(backbone, r=16)
     register_embedding_grad_mask(backbone)
-    ckpt = torch.load(Path(args.checkpoint) / "training_state.pt", map_location="cpu", weights_only=False)
+    ckpt = torch.load(
+        Path(args.checkpoint) / "training_state.pt", map_location="cpu", weights_only=False
+    )
     backbone.load_state_dict(ckpt["model_state_dict"], strict=False)
     backbone = backbone.to(device).eval()
     print(f"Loaded checkpoint from step {ckpt['step']}")
@@ -76,6 +93,7 @@ def main():
     # Load English FLEURS for reference
     print("=== Loading FLEURS English ===")
     from datasets import load_dataset
+
     en_ds = load_dataset("google/fleurs", "en_us", split="train", trust_remote_code=True)
 
     # Process TR→HI samples
@@ -86,13 +104,13 @@ def main():
     n = min(args.num_samples, len(tr_hi_files), len(hi_tr_files))
 
     for i in range(n):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Sample {i}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # === TR → HI ===
         sample = torch.load(tr_hi_files[i], weights_only=False)
-        print(f"\nTR→HI:")
+        print("\nTR→HI:")
         print(f"  Source (TR): {sample['source_text'][:80]}...")
         print(f"  Target (HI): {sample['target_text'][:80]}...")
 
@@ -105,12 +123,14 @@ def main():
         # Generate target
         tgt_len = sample["target_audio_codes"].shape[1]
         gen_tokens = autoregressive_generate(
-            backbone, sample["source_audio_codes"], device,
+            backbone,
+            sample["source_audio_codes"],
+            device,
             max_new_tokens=tgt_len,
         )
-        gt_tokens = sample["target_audio_codes"][0, :len(gen_tokens)]
+        gt_tokens = sample["target_audio_codes"][0, : len(gen_tokens)]
         accuracy = (gen_tokens.cpu() == gt_tokens).float().mean().item()
-        print(f"  Token accuracy: {accuracy*100:.1f}%")
+        print(f"  Token accuracy: {accuracy * 100:.1f}%")
 
         # Decode and save
         sample_dir = output_dir / f"sample_{i}_tr_to_hi"
@@ -137,17 +157,19 @@ def main():
 
         # === HI → TR ===
         sample = torch.load(hi_tr_files[i], weights_only=False)
-        print(f"\nHI→TR:")
+        print("\nHI→TR:")
         print(f"  Source (HI): {sample['source_text'][:80]}...")
         print(f"  Target (TR): {sample['target_text'][:80]}...")
 
         gen_tokens = autoregressive_generate(
-            backbone, sample["source_audio_codes"], device,
+            backbone,
+            sample["source_audio_codes"],
+            device,
             max_new_tokens=sample["target_audio_codes"].shape[1],
         )
-        gt_tokens = sample["target_audio_codes"][0, :len(gen_tokens)]
+        gt_tokens = sample["target_audio_codes"][0, : len(gen_tokens)]
         accuracy = (gen_tokens.cpu() == gt_tokens).float().mean().item()
-        print(f"  Token accuracy: {accuracy*100:.1f}%")
+        print(f"  Token accuracy: {accuracy * 100:.1f}%")
 
         sample_dir = output_dir / f"sample_{i}_hi_to_tr"
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -171,14 +193,14 @@ def main():
 
         print(f"  Saved to {sample_dir}/")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"All outputs saved to {output_dir}/")
-    print(f"Each sample has:")
-    print(f"  1_source_*.wav         - Input audio")
-    print(f"  2_generated_*.wav      - Model output (translated)")
-    print(f"  3_english_reference.wav - Same sentence in English")
-    print(f"  4_groundtruth_*.wav    - Actual target from FLEURS")
-    print(f"{'='*60}")
+    print("Each sample has:")
+    print("  1_source_*.wav         - Input audio")
+    print("  2_generated_*.wav      - Model output (translated)")
+    print("  3_english_reference.wav - Same sentence in English")
+    print("  4_groundtruth_*.wav    - Actual target from FLEURS")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

@@ -1,6 +1,16 @@
-"""Evaluate translation with all 32 codebooks for intelligible audio.
+"""Evaluate translation using all 32 audio codebooks for intelligible playback.
 
-Usage:
+WHY THIS EXISTS
+---------------
+``eval_translation.py`` evaluates only codebook 0, which is enough
+for a BLEU score but produces unintelligible audio. This script
+runs the depth decoder over all 32 codebooks so a human reviewer
+can listen to the generated wavs and judge naturalness.
+
+GPU-only -- see ``eval_stage2.py`` for the rationale.
+
+Usage::
+
     python scripts/eval_full_codebooks.py --checkpoint checkpoints/stage2_full/checkpoint_step_1000
 """
 
@@ -8,15 +18,15 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
-import soundfile as sf
 import numpy as np
+import soundfile as sf
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.data.mimi_encoder import MimiEncoder
 from src.model.backbone import TinyAyaBackbone
 from src.model.lora_setup import apply_lora, register_embedding_grad_mask
-from src.data.mimi_encoder import MimiEncoder
 
 
 def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
@@ -25,8 +35,10 @@ def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
     T_src = src_cb0.shape[1]
     generated_cb0 = src_cb0.clone()
     text_ids = torch.full(
-        (1, T_src), TinyAyaBackbone.ZERO_PADDING,
-        dtype=torch.long, device=device,
+        (1, T_src),
+        TinyAyaBackbone.ZERO_PADDING,
+        dtype=torch.long,
+        device=device,
     )
 
     all_generated = []  # collect [32, 1] per step
@@ -45,11 +57,13 @@ def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
             # Feed back codebook 0 for next step
             next_cb0 = next_tokens[0].unsqueeze(0).unsqueeze(0).to(device)  # [1, 1]
             generated_cb0 = torch.cat([generated_cb0, next_cb0], dim=1)
-            text_pad = torch.full((1, 1), TinyAyaBackbone.ZERO_PADDING, dtype=torch.long, device=device)
+            text_pad = torch.full(
+                (1, 1), TinyAyaBackbone.ZERO_PADDING, dtype=torch.long, device=device
+            )
             text_ids = torch.cat([text_ids, text_pad], dim=1)
 
             if (step + 1) % 50 == 0:
-                print(f"  Generated {step+1}/{max_new_tokens} frames")
+                print(f"  Generated {step + 1}/{max_new_tokens} frames")
 
     # Stack: [32, max_new_tokens]
     return torch.stack(all_generated, dim=1)
@@ -71,7 +85,9 @@ def main():
     backbone = TinyAyaBackbone(load_in_bf16=True, num_codebooks=32)
     backbone = apply_lora(backbone, r=16)
     register_embedding_grad_mask(backbone)
-    ckpt = torch.load(Path(args.checkpoint) / "training_state.pt", map_location="cpu", weights_only=False)
+    ckpt = torch.load(
+        Path(args.checkpoint) / "training_state.pt", map_location="cpu", weights_only=False
+    )
     backbone.load_state_dict(ckpt["model_state_dict"], strict=False)
     backbone = backbone.to(device).eval()
     print(f"Loaded checkpoint from step {ckpt['step']}")
@@ -83,6 +99,7 @@ def main():
     # Load English FLEURS for reference
     print("=== Loading FLEURS English ===")
     from datasets import load_dataset
+
     en_ds = load_dataset("google/fleurs", "en_us", split="train", trust_remote_code=True)
 
     # Process samples
@@ -93,9 +110,9 @@ def main():
     n = min(args.num_samples, len(tr_hi_files), len(hi_tr_files))
 
     for i in range(n):
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Sample {i}")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
 
         # English reference
         en_sample = en_ds[i]
@@ -109,14 +126,16 @@ def main():
 
         tgt_len = sample["target_audio_codes"].shape[1]
         gen_codes = autoregressive_generate(
-            backbone, sample["source_audio_codes"], device,
+            backbone,
+            sample["source_audio_codes"],
+            device,
             max_new_tokens=tgt_len,
         )
 
         # Check CB0 accuracy
-        gt_cb0 = sample["target_audio_codes"][0, :gen_codes.shape[1]]
+        gt_cb0 = sample["target_audio_codes"][0, : gen_codes.shape[1]]
         acc = (gen_codes[0] == gt_cb0).float().mean().item()
-        print(f"  CB0 accuracy: {acc*100:.1f}%")
+        print(f"  CB0 accuracy: {acc * 100:.1f}%")
 
         sample_dir = output_dir / f"sample_{i}_tr_to_hi"
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -144,13 +163,15 @@ def main():
 
         tgt_len = sample["target_audio_codes"].shape[1]
         gen_codes = autoregressive_generate(
-            backbone, sample["source_audio_codes"], device,
+            backbone,
+            sample["source_audio_codes"],
+            device,
             max_new_tokens=tgt_len,
         )
 
-        gt_cb0 = sample["target_audio_codes"][0, :gen_codes.shape[1]]
+        gt_cb0 = sample["target_audio_codes"][0, : gen_codes.shape[1]]
         acc = (gen_codes[0] == gt_cb0).float().mean().item()
-        print(f"  CB0 accuracy: {acc*100:.1f}%")
+        print(f"  CB0 accuracy: {acc * 100:.1f}%")
 
         sample_dir = output_dir / f"sample_{i}_hi_to_tr"
         sample_dir.mkdir(parents=True, exist_ok=True)
@@ -168,13 +189,13 @@ def main():
 
         print(f"  Saved to {sample_dir}/")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"All outputs in {output_dir}/")
-    print(f"  1_input_*.wav        - Source language input")
-    print(f"  2_output_*.wav       - Model translation (all 32 codebooks)")
-    print(f"  3_english_ref.wav    - Same sentence in English")
-    print(f"  4_groundtruth_*.wav  - Actual FLEURS target")
-    print(f"{'='*60}")
+    print("  1_input_*.wav        - Source language input")
+    print("  2_output_*.wav       - Model translation (all 32 codebooks)")
+    print("  3_english_ref.wav    - Same sentence in English")
+    print("  4_groundtruth_*.wav  - Actual FLEURS target")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

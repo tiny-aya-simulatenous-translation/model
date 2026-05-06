@@ -1,0 +1,82 @@
+# Canary config -- TPU v5litepod-64 SPOT in europe-west4-b (or us-central1-a).
+#
+# WHY THIS CONFIG EXISTS
+# ----------------------
+# Backup target for the spot fallback path: when neither the on-demand
+# v4-64 (us-central2-b) nor the spot v4-32 (us-central2-b) materialise,
+# the TRC grant still has 64 spot v5e chips in europe-west4-b and
+# us-central1-a. This config retunes the canary for 64 v5e chips.
+#
+# Differences vs configs/stage2_tpu_canary_v4_spot.yaml:
+#   * v5e has 16 GiB HBM/chip (HALF of v4's 32 GiB) -> batch_size 1 not 2.
+#   * 64 chips vs v4-32's 16 -> 4x the data parallelism. Effective batch
+#     held at 1 * 2 * 64 = 128 by leaving grad_accum at 2.
+#   * Same save_every: 100, keep_last_n: 5 for spot resilience.
+#   * Same use_scan_layers / xla_grad_checkpoint flags.
+#
+# Usage:
+#   TRC_PROFILE=v5e-64-ew4b \
+#   QR_NAME=tinyaya-stage2-spot-v5e-canary-qr \
+#   NODE_ID=tinyaya-stage2-spot-v5e-canary \
+#   CONFIG_FILE=configs/stage2_tpu_canary_v5e_spot.yaml \
+#   TPU_STRATEGY=fsdpv2_lora \
+#   PROBE_FIRST=1 \
+#     bash scripts/tpu/launch_spot.sh
+#
+# See also: docs/tpu-trc-allocation.md  (TRC quotas)
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+# ---------------------------------------------------------------------
+# Train: v5litepod-64 spot retune.
+# Effective batch = 1 * 2 * 64 = 128.
+# ---------------------------------------------------------------------
+train:
+  num_codebooks: 8
+  batch_size: 1
+  grad_accum: 2
+  max_steps: 200
+  warmup_steps: 50
+  depth_chunk_size: 16
+  precision: bfloat16
+
+  # Same disable as the v4 canary. v5e has 16 GiB/chip (half of v4),
+  # so without checkpointing the per-chip activation budget is
+  # tighter; if this config OOMs, set xla_grad_checkpoint: true and
+  # halve depth_chunk_size before re-enabling scan_layers (which is
+  # blocked anyway by the LoRA[0:33] + FullFT[34:35] uniformity check
+  # in scan_layers.py).
+  use_scan_layers: false
+  xla_grad_checkpoint: false
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  save_every: 100
+  audio_every: 100
+  val_every: 100
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v5e-spot-canary
+  keep_last_n: 5
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v5litepod-64-spot-canary

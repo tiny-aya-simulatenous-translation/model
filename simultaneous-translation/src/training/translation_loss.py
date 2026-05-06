@@ -1,8 +1,25 @@
-"""Hierarchical translation loss: target-only CE on text + 8 audio codebooks.
+"""Hierarchical translation loss: target-only CE on text + N audio codebooks.
 
-Ported from tinyaya-moshi-backbone/src/moshi_backbone/training/translation_loss.py,
-adapted to next-token shift convention used in scripts/train_hierarchical.py
-(logits[:,:-1] vs targets[:,1:]) and hierarchical audio logits [B, CB, T, V].
+WHY THIS EXISTS
+---------------
+The composite predicts both text and ``num_codebooks`` audio token
+streams. The translation training only supervises the *target*
+positions (the second half of each sample, after ``loss_mask`` flips
+to 1). Loss is the weighted sum of:
+
+* a single text cross-entropy over the target positions,
+* the per-codebook mean cross-entropy over the target positions.
+
+The next-token shift convention is ``logits[:, :-1] vs targets[:, 1:]``
+applied symmetrically to the text and audio streams.
+
+GPU vs TPU
+----------
+The function is plain PyTorch ``F.cross_entropy`` calls; XLA traces
+each call into HLO ``select`` + ``log_softmax`` ops with no special
+treatment required. The ``per_codebook`` Python loop unrolls into
+``num_codebooks`` HLO subgraphs at compile time -- a one-time cost
+because the codebook dimension is small (8) and stable.
 """
 
 import torch
@@ -10,12 +27,12 @@ import torch.nn.functional as F
 
 
 def compute_hierarchical_translation_loss(
-    text_logits: torch.Tensor,     # [B, T, text_vocab]
-    audio_logits: torch.Tensor,    # [B, CB, T, audio_vocab]
-    text_targets: torch.Tensor,    # [B, T]
-    audio_targets: torch.Tensor,   # [B, CB, T]
+    text_logits: torch.Tensor,  # [B, T, text_vocab]
+    audio_logits: torch.Tensor,  # [B, CB, T, audio_vocab]
+    text_targets: torch.Tensor,  # [B, T]
+    audio_targets: torch.Tensor,  # [B, CB, T]
     attention_mask: torch.Tensor,  # [B, T]
-    loss_mask: torch.Tensor,       # [B, T] — 1 ONLY on target positions
+    loss_mask: torch.Tensor,  # [B, T] — 1 ONLY on target positions
     text_weight: float = 0.1,
     audio_weight: float = 1.0,
 ) -> dict[str, torch.Tensor]:
@@ -27,7 +44,7 @@ def compute_hierarchical_translation_loss(
 
     am = attention_mask[:, 1:].bool()
     lm = loss_mask[:, 1:].bool()
-    mask = am & lm                              # [B, T-1]
+    mask = am & lm  # [B, T-1]
     denom = mask.float().sum().clamp(min=1.0)
 
     B, Tm1, V_text = tl.shape
@@ -52,7 +69,7 @@ def compute_hierarchical_translation_loss(
             reduction="none",
         ).view(B, Tm1)
         per_cb.append((ce_c * mask.float()).sum() / denom)
-    per_codebook = torch.stack(per_cb)          # [CB]
+    per_codebook = torch.stack(per_cb)  # [CB]
     audio_loss = per_codebook.mean()
 
     loss = text_weight * text_loss + audio_weight * audio_loss

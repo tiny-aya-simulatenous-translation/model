@@ -1,40 +1,97 @@
-# Canary config — 200-step smoke test before the full TPU v4-64 run.
-# Same backend, same model, same data; only the schedule and save_dir differ
-# from configs/stage2_tpu.yaml so canary checkpoints stay isolated.
+# Canary config -- short smoke test before paying for a multi-day TPU run.
 #
-# Use with: python scripts/train_hierarchical.py --config configs/stage2_tpu_canary.yaml
-# Or via Queued Resource VM metadata:  --metadata=config-file=configs/stage2_tpu_canary.yaml
+# Same backend, same model, same data; only the schedule and save_dir
+# differ from configs/stage2_tpu.yaml so canary checkpoints stay isolated.
+# This config restores the production-fidelity sequence length (300
+# frames) and depth-decoder chunk size (16) once Phase 1 (scan_layers)
+# and Phase 2 (gradient checkpointing) have brought XLA compile time
+# back under 5 minutes.
+#
+# Usage:
+#   python scripts/train_hierarchical.py --config configs/stage2_tpu_canary.yaml
+# Or via Queued Resource VM metadata:
+#   --metadata=config-file=configs/stage2_tpu_canary.yaml
 
+# Backend selection. ``tpu`` activates the SPMD-aware path in
+# src/backend/tpu_backend.py. GPU users override on the CLI:
+# ``--backend gpu`` or just ``--backend auto`` (auto detects).
 backend: tpu
 
+# ---------------------------------------------------------------------
+# Data: paths inside the TPU VM. ``hot_redeploy.sh`` mounts the dataset
+# at /mnt/data; the GCS-side equivalent lives at
+# gs://tinyaya-stage2-tpu/encoded/. ``num_workers=4`` is host-side
+# DataLoader workers, NOT TPU chips.
+# ---------------------------------------------------------------------
 data:
   encoded_dir: /mnt/data/encoded
   train_split: /mnt/data/splits/train.jsonl
   val_split: /mnt/data/splits/val.jsonl
-  # Canary uses short sequences (64 frames = ~5 seconds @ 12.5 fps) so XLA
-  # compile finishes in minutes instead of hours. Full run scales this up.
-  max_frames: 64
+  # 300 frames at 12.5 fps = 24 seconds. Restored from 64 (~5 s) once
+  # scan_layers cut XLA compile time. PLAN.md Phase 4.
+  max_frames: 300
   audio_frame_rate: 12.5
   num_workers: 4
+  # pin_memory is a CUDA/host-RAM concept; on TPU the dataloader
+  # produces CPU tensors that ``mark_sharding`` later moves to XLA.
+  # Leaving pin_memory False on TPU avoids a no-op warning.
   pin_memory: false
 
+# ---------------------------------------------------------------------
+# Train: per-chip batch + gradient accumulation. The effective batch
+# size is ``batch_size * grad_accum * num_chips`` -- on v5litepod-16
+# that is 1 * 2 * 16 = 32. AdamW keeps moments in fp32 even when
+# parameters are bf16, so optimiser numerics stay clean.
+# ---------------------------------------------------------------------
 train:
   num_codebooks: 8
   batch_size: 1
   grad_accum: 2
-  # Effective batch = batch_size * grad_accum * num_chips = 1 * 2 * 16 = 32
   max_steps: 200
   warmup_steps: 50
-  # Canary: depth_chunk_size = max_frames = 64 -> single chunk, no Python loop.
-  # XLA compiles a single depth_decoder forward instead of 8 unrolled copies,
-  # cutting compile time roughly 8x.
-  depth_chunk_size: 64
+  # depth_chunk_size: how many frames the depth decoder processes per
+  # checkpointed call. 16 keeps activations bounded; 64 (the previous
+  # canary value) put everything in one chunk to dodge the original
+  # XLA compile blowup. Restored to 16 now that scan_layers + grad
+  # checkpoint are both live. PLAN.md Phase 4.
+  depth_chunk_size: 16
   precision: bfloat16
 
+  # ---- TPU compile + memory optimisations (PLAN.md Phase 1 + 2) ----
+  # use_scan_layers: DISABLED for canary baseline.
+  # Three confirmed problems with scan_layers on this model:
+  #   1. _ensure_same_structure(params_list) in scan_layers.py rejects
+  #      our LoRA[0:33] + FullFT[34:35] split (intentional design in
+  #      lora_setup.py). Verified by ValueError("Layer 34 has
+  #      mismatched keys. Missing: q_proj.lora_B; Extra: q_proj.weight").
+  #   2. is_layer_pure=True (the trace-cache speedup) crashes with
+  #      AssertionError("FakeTensor... aten.index_select.default") on
+  #      position-embedding gather (PyTorch issue #105485).
+  #   3. scan creates fake_tensors that allocate device memory during
+  #      HLO staging (pytorch/xla #8612); risks OOM on v4-32.
+  # Future option: partition layers [0:34] under scan + [34:36] manual
+  # (.factory/memories.md). For now, run unrolled to prove the wiring.
+  use_scan_layers: false
+  # xla_grad_checkpoint: DISABLED for canary baseline.
+  # Without scan, the unrolled 36+6 layers pay full activation memory.
+  # Disabling checkpointing keeps the graph simple for the first
+  # successful compile. Re-enable in production configs once we
+  # have a known-good loss curve.
+  xla_grad_checkpoint: false
+
+# Loss weights. The audio loss dominates because there are
+# num_codebooks * T predictions per sample vs. one text token per
+# frame. ``text_weight`` is intentionally small to keep gradients
+# balanced.
 loss:
   text_weight: 0.1
   audio_weight: 1.0
 
+# Per-parameter-group learning rates. ``lora`` covers all
+# trainable LoRA adapters (the bulk of trainable params). ``full_ft``
+# is reserved for the last two backbone layers and is much smaller.
+# ``projection`` and ``depth`` get larger LRs because they are
+# small modules that need to move quickly.
 optim:
   lr_lora: 1.5e-4
   lr_full_ft: 5.0e-5
@@ -43,13 +100,17 @@ optim:
   lr_audio_embed: 5.0e-4
   lr_text_embed: 5.0e-4
 
+# Logging cadence. ``audio_every`` triggers a Mimi decode + W&B
+# audio upload, which is expensive; once during the canary is
+# enough to confirm the audio path works.
 logging:
   log_every: 10
-  save_every: 50      # exercise xm.save 3-4 times
-  audio_every: 100    # exercise Mimi decoding for audio sample once
-  val_every: 100      # exercise validation loop once
-  # Local path: GCS save isn't yet wired through save_checkpoint (uses os.makedirs).
-  # Canary validates the training loop; GCS upload can run as a post-step.
+  save_every: 50      # exercise xm.save 3-4 times during the run
+  audio_every: 100    # one audio sample upload
+  val_every: 100      # one validation pass
+  # Local path: GCS save isn't yet wired through save_checkpoint
+  # (it uses os.makedirs). Canary validates the training loop only;
+  # GCS upload runs as a post-step rsync.
   save_dir: /mnt/data/checkpoints/canary
   keep_last_n: 3
   use_wandb: true

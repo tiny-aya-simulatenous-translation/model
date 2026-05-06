@@ -1,9 +1,30 @@
-"""Mimi codec wrapper for encoding/decoding audio."""
+"""Mimi codec wrapper for encoding / decoding audio.
+
+WHY THIS EXISTS
+---------------
+The data pipeline encodes raw waveform into Mimi audio codes once,
+offline, and persists the result in ``.pt`` shards consumed by the
+training datasets. This module is the helper used by the offline
+encoder (``scripts/prepare_data.py``) and by the inference scripts
+that need to round-trip audio for ad-hoc demos.
+
+The Mimi model itself is a separate HF checkpoint (``kyutai/mimi``)
+and is NOT part of the trained composite. We only ever call its
+``encode``/``decode`` methods; its weights are frozen.
+
+GPU vs TPU
+----------
+The default ``device="cuda"`` is fine for offline encoding on a GPU
+host. TPU users should encode their data on a GPU box (faster + the
+TPU runtime does not currently support 1-D conv1d kernels well) and
+upload the resulting shards to GCS. The training loop never touches
+``MimiEncoder`` directly.
+"""
 
 import numpy as np
 import torch
 from scipy.signal import resample_poly
-from transformers import MimiModel, AutoFeatureExtractor
+from transformers import AutoFeatureExtractor, MimiModel
 
 
 class MimiEncoder:
@@ -32,6 +53,7 @@ class MimiEncoder:
         if sr is not None and sr != self.sample_rate:
             # Resample using scipy (avoids torchaudio CUDA dep issues)
             from math import gcd
+
             g = gcd(sr, self.sample_rate)
             audio_np = audio.squeeze().numpy()
             audio_np = resample_poly(audio_np, self.sample_rate // g, sr // g)
@@ -64,5 +86,5 @@ class MimiEncoder:
 
         output = self.model.decode(codes)
         # MimiDecoderOutput has .audio_values attribute
-        audio = output.audio_values if hasattr(output, 'audio_values') else output
+        audio = output.audio_values if hasattr(output, "audio_values") else output
         return audio.squeeze().cpu()

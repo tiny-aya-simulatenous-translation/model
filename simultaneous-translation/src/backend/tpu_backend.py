@@ -1,39 +1,71 @@
 """TPU backend with multiple SPMD sharding strategies.
 
-Strategy selection is controlled by the TPU_STRATEGY environment variable:
+WHY THIS EXISTS
+---------------
+On a GPU pod we use **DDP** -- one Python process per rank, NCCL
+all-reduce on the backward pass. On a TPU pod we use **SPMD**: a
+single logical program runs across every chip via PJRT, and the XLA
+partitioner decides where each tensor lives. This file is the only
+place in the codebase that should know about XLA-specific primitives
+(``Mesh``, ``mark_sharding``, ``FSDPv2``, ``xm.optimizer_step``).
 
-  replicated  Each chip holds a full copy of the model. Inputs are sharded
-              across the batch dimension via xs.mark_sharding. Gradients are
-              implicitly all-reduced when XLA compiles the backward pass.
-              Best for: small trainable parameter counts (LoRA), tight HBM.
-              No FSDP partitioner involved -> avoids the SPMD partitioner
-              "ShapeUtil::IsScalarWithElementType" crash on torch_xla 2.9.
+WHAT IS SPMD?
+-------------
+"Single Program Multiple Data". You write one ``forward`` as if for
+a single device. You annotate inputs / parameters with
+``mark_sharding(tensor, mesh, partition_spec)`` to tell the
+partitioner how the tensor is split across the mesh. XLA inserts the
+necessary ``all-gather`` / ``reduce-scatter`` / ``all-reduce``
+operations during compile.
 
-  fsdpv2      SpmdFullyShardedDataParallel wrapping the whole composite
-              model. Shards weights, grads, and optimizer state across the
-              fsdp axis. Lowest per-chip memory footprint, but currently
-              hits a partitioner crash on v5e + torch_xla 2.9 unless
-              XLA_DISABLE_FUNCTIONALIZATION=0 (the default in 2.9 anyway).
+GPU-vs-TPU comparison
+---------------------
+=======================  ===============================  ==================================
+Concept                  GPU (DDP)                        TPU (SPMD)
+=======================  ===============================  ==================================
+Process model            N processes (one per rank)       1 process driving N chips
+Data parallelism         Each rank sees a different       ``mark_sharding(x, mesh, ("fsdp",
+                         batch slice via                   None,...))`` tells the
+                         ``DistributedSampler``           partitioner to split x on dim 0
+Gradient sync            NCCL all-reduce on backward      Inserted by the XLA partitioner
+                                                          inside the compiled graph
+Mixed precision          ``torch.amp.autocast``           Cast model to ``torch.bfloat16``
+                                                          once; activations follow
+Memory probe             ``torch.cuda.memory_allocated``  ``xm.get_memory_info(device)``
+=======================  ===============================  ==================================
 
-  fsdpv2_lora Wrap only modules that contain trainable LoRA parameters with
-              FSDPv2. The frozen backbone remains replicated. Compromise:
-              shards optimizer state (the bulk of trainable-side memory)
-              but keeps the heavy frozen weights cheap to materialize.
+Strategy selection (env: ``TPU_STRATEGY``)
+------------------------------------------
+``replicated``
+    Each chip holds a full copy of the model. Inputs are sharded on
+    the batch axis. XLA inserts cross-chip all-reduce on the
+    backward pass automatically. Best for small trainable parameter
+    counts (LoRA only) and for *avoiding* the SPMD partitioner --
+    useful when the partitioner crashes on multi-output composites.
 
-  auto        Pick replicated if trainable_params < 500M else fsdpv2.
+``fsdpv2``
+    ``SpmdFullyShardedDataParallel`` wrapping the *whole* composite
+    model. Shards weights, gradients, and optimiser state along the
+    fsdp axis. Lowest per-chip footprint; highest comm cost.
 
-Hardware-utilization diagnostics:
+``fsdpv2_lora``
+    Wrap only modules that contain trainable LoRA parameters. The
+    frozen backbone stays replicated. Compromise: shards optimiser
+    state (the bulk of trainable-side memory) but keeps the heavy
+    frozen weights cheap to materialise. Default for the canary.
 
-  diagnose()  Prints per-chip HBM (used / total), mesh layout, and the
-              sharding spec of any tensor passed in. Use from the trainer
-              after the first forward to confirm the partitioner sharded
-              activations the way we expect.
+``auto``
+    Pick ``replicated`` if trainable_params < 500M else ``fsdpv2``.
 
-SPMD trade-off note:
-  SPMD runs as a single process across all TPU chips. If any chip OOMs or
-  errors, the whole job dies. Mitigated by frequent async checkpoints and
-  the spot-preemption restart loop in scripts/tpu/startup_script.sh.
+Compile-time gotcha
+-------------------
+SPMD runs as a single process. If any chip OOMs or errors, the whole
+job dies. Mitigated by frequent checkpoints and the spot-preemption
+restart loop in ``scripts/tpu/startup_script.sh``. See
+``.factory/memories.md`` for empirical compile / step / HBM
+measurements per strategy.
 """
+
 from __future__ import annotations
 
 import os
@@ -44,11 +76,34 @@ import torch.nn as nn
 
 from src.backend.base import BackendBase
 
-
-_VALID_STRATEGIES = ("auto", "replicated", "fsdpv2", "fsdpv2_lora")
+#: Strategies that ``TPU_STRATEGY`` may take. ``auto`` is resolved
+#: against the model's trainable-parameter count at wrap time.
+_VALID_STRATEGIES: tuple[str, ...] = ("auto", "replicated", "fsdpv2", "fsdpv2_lora")
 
 
 def _resolve_strategy(model: nn.Module | None) -> str:
+    """Pick the SPMD strategy from the environment (and the model if needed).
+
+    Parameters
+    ----------
+    model : nn.Module or None
+        The unwrapped composite. Used to count trainable parameters
+        when ``TPU_STRATEGY=auto``. ``None`` is treated as "no
+        information" and falls back to ``replicated``.
+
+    Returns
+    -------
+    str
+        One of ``"replicated"``, ``"fsdpv2"``, ``"fsdpv2_lora"``.
+
+    Notes
+    -----
+    The ``500M`` threshold for the auto path is a heuristic: at the
+    canary scale (~274M trainable LoRA params) replicated comfortably
+    fits; once the trainable count crosses ~500M the optimiser state
+    alone (AdamW keeps fp32 m + v) becomes the dominant memory cost
+    and FSDPv2's optimiser-state sharding starts to pay off.
+    """
     raw = os.environ.get("TPU_STRATEGY", "auto").strip().lower()
     if raw not in _VALID_STRATEGIES:
         print(f"[tpu_backend] unknown TPU_STRATEGY={raw!r}; falling back to auto")
@@ -59,36 +114,57 @@ def _resolve_strategy(model: nn.Module | None) -> str:
         return "replicated"
     trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     chosen = "replicated" if trainable < 500_000_000 else "fsdpv2"
-    print(f"[tpu_backend] auto-strategy: trainable={trainable/1e6:.0f}M -> {chosen}")
+    print(f"[tpu_backend] auto-strategy: trainable={trainable / 1e6:.0f}M -> {chosen}")
     return chosen
 
 
 class TPUBackend(BackendBase):
-    def __init__(self):
-        self._device = None
+    """``BackendBase`` implementation for TPU pods using SPMD."""
+
+    def __init__(self) -> None:
+        self._device: torch.device | None = None
         self._mesh = None
-        self._world_size_val = None
-        self._strategy = None
+        self._world_size_val: int | None = None
+        self._strategy: str | None = None
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
 
     def init_distributed(self) -> None:
+        """Initialise PJRT, enable SPMD, and build a 1-D mesh.
+
+        GPU analogue: ``dist.init_process_group("nccl")`` followed by
+        ``torch.cuda.set_device(local_rank)``.
+
+        Notes
+        -----
+        TPU note: ``XLA_DISABLE_FUNCTIONALIZATION=0`` *must* stay set.
+        With value ``1`` the SPMD partitioner crashes on multi-output
+        composite models (pytorch/xla #8607). 2.9's default is already
+        ``0`` but we set it defensively here in case the user's shell
+        injected the broken value.
+
+        We do NOT set ``XLA_USE_BF16`` -- removed in torch_xla 2.6 and
+        silently no-ops in 2.9. The bf16 cast happens in
+        :meth:`wrap_model` instead.
+        """
         import torch_xla.core.xla_model as xm
         import torch_xla.runtime as xr
         from torch_xla.distributed.spmd import Mesh
 
-        # Functionalization must stay enabled on torch_xla 2.9 to avoid the
-        # SPMD partitioner crash described in pytorch/xla#8607. We force it
-        # here defensively even though 2.9's default is already on.
         os.environ.setdefault("XLA_DISABLE_FUNCTIONALIZATION", "0")
-        # XLA_USE_BF16 was removed in torch_xla 2.6+. We cast the model to
-        # bf16 explicitly inside wrap_model() instead. On v5e (16 GiB HBM)
-        # the 5.17B composite model can't fit in f32 -- we OOM during XLA
-        # compile if compute stays at f32.
 
+        # GPU analogue: dist.init_process_group("nccl")
         xr.use_spmd()
+        # GPU analogue: torch.device(f"cuda:{local_rank}")
         self._device = xm.xla_device()
 
         num_devices = xr.global_runtime_device_count()
         self._world_size_val = num_devices
+        # 1-D mesh named "fsdp". The partition_spec for a sharded
+        # tensor will match this axis name -- e.g., a per-batch shard
+        # is ``("fsdp", None, None, ...)``.
         self._mesh = Mesh(
             device_ids=list(range(num_devices)),
             mesh_shape=(num_devices,),
@@ -101,23 +177,59 @@ class TPUBackend(BackendBase):
         self.diagnose("post-init")
 
     def get_device(self) -> torch.device:
+        """Return the lazy XLA device handle.
+
+        Notes
+        -----
+        TPU note: the XLA device is *logical* and *lazy*. Tensors
+        moved to it accumulate in a graph; they do not become
+        physical TPU tensors until the next ``torch_xla.sync()`` or
+        ``xm.optimizer_step``. This is why the first training step
+        is slow (compile + execute) and subsequent steps are fast
+        (cached binary).
+        """
         if self._device is None:
             import torch_xla.core.xla_model as xm
+
             self._device = xm.xla_device()
         return self._device
 
-    def wrap_model(self, model: nn.Module) -> nn.Module:
-        # HF gradient_checkpointing_enable() is incompatible with torch 2.9 +
-        # XLA (its internal _get_device_module does getattr(torch, "xla")
-        # which raises). On v5e with the strategies below we have enough HBM
-        # for batch_size=1 + bf16 weights without checkpointing for the
-        # canary; if we OOM, switch on torch.utils.checkpoint manually.
+    # ------------------------------------------------------------------
+    # Model wrapping
+    # ------------------------------------------------------------------
 
-        # Cast to bf16 to fit the model in 16 GiB/chip on v5e. Trainable
-        # parameters stay in bf16 too -- we accept the precision loss for
-        # LoRA fine-tuning (standard practice in HF PEFT). AdamW keeps its
-        # moment buffers in f32 internally even when params are bf16, so
-        # optimizer numerics stay clean.
+    def wrap_model(self, model: nn.Module) -> nn.Module:
+        """Cast model to bf16 and apply the chosen SPMD strategy.
+
+        Parameters
+        ----------
+        model : nn.Module
+            The composite, already on the XLA device.
+
+        Returns
+        -------
+        nn.Module
+            The wrapped model. On a single chip this is a no-op
+            (the bf16 cast still happens). On a pod it is either the
+            same module with sharding spec attached (replicated) or
+            an ``SpmdFullyShardedDataParallel`` wrapper (fsdpv2*).
+
+        Notes
+        -----
+        TPU note: bf16 cast happens *here*, not via env vars. The
+        legacy ``XLA_USE_BF16=1`` was removed in torch_xla 2.6+ and
+        silently no-ops; tensors stay in f32 and the model OOMs on
+        v5e (16 GiB / chip). AdamW keeps optimiser moments in fp32
+        even when params are bf16, so optimiser numerics stay clean.
+
+        Do NOT call ``model.gradient_checkpointing_enable()`` here on
+        torch 2.9 + torch_xla 2.9 -- the legacy HF checkpoint hook
+        calls ``torch._get_device_module("xla")`` which raises. Use
+        the ``xla_grad_checkpoint`` flag on ``TinyAyaMoshiComposite``
+        instead.
+        """
+        # GPU analogue: torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        # but applied as a permanent cast rather than a per-op context.
         model = model.to(torch.bfloat16)
         print("[tpu_backend] cast model to bfloat16")
 
@@ -140,17 +252,31 @@ class TPUBackend(BackendBase):
     def _wrap_replicated(self, model: nn.Module) -> nn.Module:
         """Replicated weights, sharded data. Each chip holds the full model.
 
-        We rely on XLA's all-reduce-on-backward via SPMD partitioner: when
-        the inputs are sharded along the batch axis and the parameters are
-        replicated, the partitioner inserts the appropriate cross-replica
-        sums during gradient accumulation automatically. No FSDP wrapper.
+        We rely on XLA's all-reduce-on-backward via the SPMD
+        partitioner: when inputs are sharded along the batch axis and
+        the parameters are replicated, the partitioner inserts the
+        appropriate cross-replica sums during gradient accumulation
+        automatically. No FSDP wrapper is needed.
+
+        Notes
+        -----
+        TPU note: this path is the safest fallback when the SPMD
+        partitioner is misbehaving (it has fewer fused passes to go
+        wrong). It's also the cheapest path memory-wise when the
+        trainable count is small (LoRA-only).
         """
         import torch_xla.distributed.spmd as xs
 
-        for name, param in model.named_parameters():
+        # ``named_parameters`` / ``named_buffers`` yield (name, tensor)
+        # pairs; we only need the tensors for ``mark_sharding``. The
+        # name is kept in the for-target purely for debug-print
+        # readability when this loop is stepped through interactively.
+        for _name, param in model.named_parameters():
             if param.requires_grad:
+                # GPU analogue: nothing -- DDP doesn't need explicit
+                # sharding hints because each rank already has a copy.
                 xs.mark_sharding(param, self._mesh, (None,) * param.dim())
-        for name, buf in model.named_buffers():
+        for _name, buf in model.named_buffers():
             xs.mark_sharding(buf, self._mesh, (None,) * buf.dim())
         print(
             "[tpu_backend] replicated: marked all parameters and buffers as "
@@ -160,19 +286,38 @@ class TPUBackend(BackendBase):
         return model
 
     def _wrap_fsdpv2(self, model: nn.Module, *, lora_only: bool) -> nn.Module:
+        """Wrap ``model`` in ``SpmdFullyShardedDataParallel``.
+
+        Parameters
+        ----------
+        model : nn.Module
+            Composite on the XLA device, bf16 cast applied.
+        lora_only : bool
+            If True, only modules whose subtree contains trainable
+            parameters are wrapped (LoRA-bearing
+            ``CohereDecoderLayer`` instances). Frozen
+            ``MoshiDecoderLayer`` instances stay replicated. If
+            False, every transformer layer is wrapped.
+
+        Returns
+        -------
+        nn.Module
+            ``SpmdFullyShardedDataParallel(model, ...)``.
+        """
+        import torch_xla.distributed.spmd as xs
+        from torch.nn import Embedding
         from torch_xla.experimental.spmd_fully_sharded_data_parallel import (
             SpmdFullyShardedDataParallel as FSDPv2,
         )
-        from torch.nn import Embedding
-        import torch_xla.distributed.spmd as xs
 
         def _shard_output(output, mesh):
-            """Composite returns (text_logits, audio_logits, hidden_states).
+            """Attach per-tensor sharding spec to a composite's tuple output.
 
-            All three need an explicit sharding spec or the SPMD partitioner
-            sees them as replicated and asserts in spmd_partitioner_util.h.
-            We shard each on the fsdp (batch) axis; remaining dims are
-            replicated.
+            The composite returns ``(text_logits, audio_logits,
+            hidden_states)``. All three need an explicit sharding
+            spec or the SPMD partitioner sees them as replicated and
+            asserts in ``spmd_partitioner_util.h``. We shard each on
+            the ``fsdp`` (batch) axis; remaining dims are replicated.
             """
             sharded = []
             for v in output:
@@ -185,9 +330,20 @@ class TPUBackend(BackendBase):
         layer_type_names = ("CohereDecoderLayer", "MoshiDecoderLayer")
 
         def _has_trainable(m: nn.Module) -> bool:
+            """True if any parameter in ``m`` (recursive) requires grad."""
             return any(p.requires_grad for p in m.parameters(recurse=True))
 
         def _wrap_policy(module, recurse, **kwargs):
+            """FSDPv2 auto-wrap policy.
+
+            * Always recurse into children so the policy can decide
+              for each transformer layer.
+            * Never wrap raw ``Embedding`` modules (they are tiny and
+              already sharded by the partitioner).
+            * Wrap only Cohere / Moshi decoder layers.
+            * In LoRA-only mode skip layers that have no trainable
+              params (i.e., the frozen Moshi depth-decoder layers).
+            """
             if recurse:
                 return True
             if isinstance(module, Embedding):
@@ -198,56 +354,114 @@ class TPUBackend(BackendBase):
                 return False
             return True
 
-        model = FSDPv2(
+        return FSDPv2(
             model,
             mesh=self._mesh,
             auto_wrap_policy=_wrap_policy,
             shard_output=_shard_output,
         )
-        return model
+
+    # ------------------------------------------------------------------
+    # Per-step ops
+    # ------------------------------------------------------------------
 
     def optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
+        """``xm.optimizer_step`` -- fences XLA + triggers SPMD reductions.
+
+        GPU analogue: ``optimizer.step()``.
+
+        Notes
+        -----
+        TPU note: ``xm.optimizer_step`` is *not* a drop-in
+        ``optimizer.step()``. It also issues an XLA execution barrier
+        that materialises any deferred ops. Without it the gradients
+        live in the lazy graph and the next forward will recompile.
+        """
         import torch_xla.core.xla_model as xm
+
         xm.optimizer_step(optimizer)
 
     def backward(self, loss: torch.Tensor) -> None:
+        """``loss.backward()``. SPMD inserts the gradient reductions
+        during compile, so there is nothing extra to do here."""
         loss.backward()
 
     def save_checkpoint(self, state: dict, path: str) -> None:
+        """``xm.save`` -- writes once per master ordinal after a barrier."""
         import torch_xla.core.xla_model as xm
+
         xm.save(state, path)
 
     def load_checkpoint(self, path: str) -> dict:
+        """Load checkpoint to host CPU; SPMD will re-shard on assign."""
         return torch.load(path, map_location="cpu", weights_only=False)
 
     def barrier(self) -> None:
+        """``xm.rendezvous("barrier")``. GPU analogue: ``dist.barrier()``."""
         import torch_xla.core.xla_model as xm
+
         xm.rendezvous("barrier")
 
     def is_main_process(self) -> bool:
+        """``xm.is_master_ordinal()`` -- True on the master TPU ordinal."""
         import torch_xla.core.xla_model as xm
+
         return xm.is_master_ordinal()
 
     def world_size(self) -> int:
+        """Number of TPU chips visible to this PJRT runtime."""
         if self._world_size_val is not None:
             return self._world_size_val
         import torch_xla.runtime as xr
+
         return xr.global_runtime_device_count()
 
     def reduce_mean(self, tensor: torch.Tensor) -> torch.Tensor:
+        """Mean-reduce across chips with ``xm.mesh_reduce``."""
         import torch_xla.core.xla_model as xm
+
         return xm.mesh_reduce("reduce_mean", tensor, lambda x: sum(x) / len(x))
 
     def autocast_context(self, dtype=torch.bfloat16):
+        """No-op context manager.
+
+        Notes
+        -----
+        TPU note: the bf16 cast applied by :meth:`wrap_model` is
+        permanent for the duration of training. Per-op autocast adds
+        nothing but XLA tracing overhead, so we return
+        ``nullcontext()``.
+        """
         return nullcontext()
 
     def no_sync(self, model: nn.Module):
+        """No-op context manager.
+
+        Notes
+        -----
+        TPU note: SPMD already runs as a single process, so there is
+        no per-rank gradient sync to skip during gradient
+        accumulation. The XLA partitioner inserts the cross-chip
+        reductions only at ``optimizer_step`` time, which is exactly
+        when we want them.
+        """
         return nullcontext()
 
     def get_memory_info(self) -> dict | None:
-        """Returns per-chip HBM info from the XLA runtime, if available."""
+        """Return per-chip HBM usage in GB, or ``None`` on import failure.
+
+        Notes
+        -----
+        TPU note: ``xm.get_memory_info(device)`` reports HBM stats
+        for the calling chip only. To see all chips, use
+        ``xr.global_runtime_device_count()`` and probe each in turn.
+        For routine training we only print the master chip's usage,
+        which is representative under SPMD because each chip holds
+        roughly the same shard.
+        """
         try:
             import torch_xla.core.xla_model as xm
+
             mem = xm.get_memory_info(self.get_device())
             return {
                 "allocated_gb": mem.get("bytes_used", 0) / 1e9,
@@ -258,18 +472,40 @@ class TPUBackend(BackendBase):
             return None
 
     def sync(self) -> None:
+        """``torch_xla.sync()`` -- fence the lazy graph builder."""
         import torch_xla
+
         torch_xla.sync()
 
+    # ------------------------------------------------------------------
+    # SPMD-only methods (no-op on GPU)
+    # ------------------------------------------------------------------
+
     def mark_sharding(self, tensor: torch.Tensor, partition_spec: tuple) -> None:
-        """Mark a tensor for SPMD sharding across the mesh."""
+        """Tell the SPMD partitioner how ``tensor`` is sharded.
+
+        GPU analogue: ``DistributedSampler`` putting different rows
+        on different ranks. SPMD is more general -- it can shard any
+        dimension of any tensor, not just the batch dim.
+        """
         import torch_xla.distributed.spmd as xs
+
         xs.mark_sharding(tensor, self._mesh, partition_spec)
 
     def diagnose(self, tag: str = "diagnose") -> None:
-        """Print mesh + per-chip HBM. Cheap; safe to call every N steps."""
+        """Print mesh layout + per-chip HBM. Cheap; safe every N steps.
+
+        Output line example::
+
+            [tpu_backend][step=10] global=16 local=4 strategy=fsdpv2_lora
+            hbm_used=7.84GB/limit=15.75GB peak=10.21GB
+
+        ``global`` is the total chip count across all hosts; ``local``
+        is the chips on *this* host (always 4 on v5e).
+        """
         try:
             import torch_xla.runtime as xr
+
             mem = self.get_memory_info() or {}
             n_global = xr.global_runtime_device_count()
             n_local = xr.addressable_runtime_device_count()

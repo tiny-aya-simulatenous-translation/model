@@ -1,8 +1,20 @@
-"""Build leak-free train/val splits (90/10) keyed on FLEURS sentence_id.
+"""Build leak-free train / val splits (90/10) keyed on FLEURS sentence_id.
 
-Usage:
-    python scripts/make_splits.py \
-        --accepted /path/to/accepted.jsonl \
+WHY THIS EXISTS
+---------------
+FLEURS is a parallel corpus: the same sentence appears in many
+languages. If we split naively on rows we end up with the *same
+sentence* in both train and val, just spoken in a different
+language -- a textbook leak. This script keys the split on
+``sentence_id`` so all language variants of a given sentence land
+in the same partition.
+
+CPU-only utility; runs once before training.
+
+Usage::
+
+    python scripts/make_splits.py \\
+        --accepted /path/to/accepted.jsonl \\
         --encoded-dir /path/to/data/encoded \
         --out-dir /path/to/data/splits \
         --val-frac 0.10 --seed 42
@@ -12,9 +24,8 @@ import argparse
 import json
 import random
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from pathlib import Path
-
 
 SENTENCE_RE = re.compile(r"fleurs_(\d+)")
 
@@ -58,16 +69,22 @@ def main():
             continue
         sid = parse_sentence_id(pair_id)
         direction = f"{src_lang}->{tgt_lang}"
-        rows.append({
-            "pt_path": str(pt_path),
-            "src_align_path": str(encoded_dir / f"{pair_id}_{src_lang}{tgt_lang}.src.alignments.json"),
-            "tgt_align_path": str(encoded_dir / f"{pair_id}_{src_lang}{tgt_lang}.tgt.alignments.json"),
-            "direction": direction,
-            "sentence_id": sid,
-            "source_type": e.get("source_type", "unknown"),
-            "tts_model": e.get("tts_model"),
-            "tts_voice": e.get("tts_voice"),
-        })
+        rows.append(
+            {
+                "pt_path": str(pt_path),
+                "src_align_path": str(
+                    encoded_dir / f"{pair_id}_{src_lang}{tgt_lang}.src.alignments.json"
+                ),
+                "tgt_align_path": str(
+                    encoded_dir / f"{pair_id}_{src_lang}{tgt_lang}.tgt.alignments.json"
+                ),
+                "direction": direction,
+                "sentence_id": sid,
+                "source_type": e.get("source_type", "unknown"),
+                "tts_model": e.get("tts_model"),
+                "tts_voice": e.get("tts_voice"),
+            }
+        )
 
     print(f"Rows: {len(rows)}  (skipped missing .pt: {skipped_no_pt})")
 
@@ -105,7 +122,7 @@ def main():
 
     summarize("TOTAL", rows)
     summarize("TRAIN", train_rows)
-    summarize("VAL",   val_rows)
+    summarize("VAL", val_rows)
     overlap = {r["sentence_id"] for r in train_rows} & {r["sentence_id"] for r in val_rows}
     print(f"\nsentence_id overlap train∩val = {len(overlap)} (must be 0)")
 

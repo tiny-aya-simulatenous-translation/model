@@ -1,0 +1,83 @@
+# TPU full-run config -- v4-32 SPOT in us-central2-b, 5000 steps.
+#
+# WHY THIS CONFIG EXISTS
+# ----------------------
+# Same intent as configs/stage2_tpu.yaml but tuned for the v4-32 spot
+# fallback (TRC profile v4-32-uc2b). When the on-demand v4-64 quota
+# is busy, this is the production config that backs Phase 5 of the
+# stabilisation plan. Differences vs stage2_tpu.yaml:
+#
+#   * batch_size 4 (vs 2 on v4-64) and grad_accum 2 to hold the
+#     effective batch at 4 * 2 * 16 = 128 -- IDENTICAL to v4-64's
+#     2 * 2 * 32. Loss curves should match step-for-step.
+#   * save_every 100 (vs 500) for spot preempt resilience.
+#   * keep_last_n 5 (vs 3) so a preempt that lands between checkpoints
+#     does not lose the only intermediate save.
+#   * wandb_run_name marks the slice + tier so eval scripts can tell
+#     spot runs from on-demand runs at a glance.
+#
+# Usage:
+#   TRC_PROFILE=v4-32-uc2b \
+#   QR_NAME=tinyaya-stage2-spot-prod-qr \
+#   NODE_ID=tinyaya-stage2-spot-prod \
+#   CONFIG_FILE=configs/stage2_tpu_v4_spot.yaml \
+#   TPU_STRATEGY=fsdpv2_lora \
+#   PROBE_FIRST=0 \
+#     bash scripts/tpu/launch_spot.sh
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+# ---------------------------------------------------------------------
+# Train: v4-32 spot production sizing.
+# Effective batch = 4 * 2 * 16 = 128, matching v4-64 (2 * 2 * 32).
+# ---------------------------------------------------------------------
+train:
+  num_codebooks: 8
+  batch_size: 4         # was 2 on v4-64; v4-32 has half the chips
+  grad_accum: 2
+  max_steps: 5000
+  warmup_steps: 500
+  depth_chunk_size: 16
+  precision: bfloat16
+
+  # Compile + memory optimisations (PLAN.md Phase 1 + 2).
+  # use_scan_layers DISABLED -- incompatible with our LoRA[0:33] +
+  # FullFT[34:35] split (scan_layers _ensure_same_structure rejects
+  # mismatched parameter keys; verified ValueError on first launch).
+  # xla_grad_checkpoint ENABLED -- without scan, per-layer checkpoint
+  # is required for the 5000-step production run on v4-32 (32 GiB/chip).
+  # See configs/stage2_tpu_canary.yaml for the full rationale.
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 20
+  save_every: 100        # spot: aggressive checkpointing
+  audio_every: 1000
+  val_every: 1000
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v4-spot
+  keep_last_n: 5         # spot: keep more
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v4-32-spot-prod

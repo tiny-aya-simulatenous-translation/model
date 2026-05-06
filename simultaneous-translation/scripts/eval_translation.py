@@ -1,8 +1,17 @@
-"""Evaluate translation: run a training sample through the model.
+"""Evaluate translation -- run a training sample through the model.
 
-Two modes:
-1. Teacher-forced: feed ground truth, check predicted tokens match
-2. Autoregressive: feed source, generate target tokens, decode with Mimi
+WHY THIS EXISTS
+---------------
+A lightweight per-sample debugger for the trained composite. Two
+modes:
+
+1. ``teacher_forced`` -- feed ground-truth tokens, check predicted
+   tokens match. Useful for validating that the loss is actually
+   minimised on a sample we *know* is in the training set.
+2. ``autoregressive`` -- feed source only, sample target tokens,
+   decode with Mimi. Closer to deployment behaviour.
+
+GPU-only.
 
 Usage:
     python scripts/eval_translation.py --checkpoint checkpoints/stage2/checkpoint_step_1000 \
@@ -13,16 +22,14 @@ import argparse
 import sys
 from pathlib import Path
 
-import torch
-import torch.nn.functional as F
 import soundfile as sf
-import numpy as np
+import torch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from src.data.mimi_encoder import MimiEncoder
 from src.model.backbone import TinyAyaBackbone
 from src.model.lora_setup import apply_lora, register_embedding_grad_mask
-from src.data.mimi_encoder import MimiEncoder
 
 
 def teacher_forced_eval(model, sample, device):
@@ -41,7 +48,8 @@ def teacher_forced_eval(model, sample, device):
     text_ids = torch.full(
         (1, audio_input.shape[1]),
         TinyAyaBackbone.ZERO_PADDING,
-        dtype=torch.long, device=device,
+        dtype=torch.long,
+        device=device,
     )
     mask = torch.ones(1, audio_input.shape[1], dtype=torch.long, device=device)
 
@@ -55,7 +63,7 @@ def teacher_forced_eval(model, sample, device):
 
     # Check accuracy on target portion (shifted by 1 for next-token prediction)
     # Prediction at position t predicts token at t+1
-    pred_target = pred_audio[T_src-1:-1]  # predictions for target positions
+    pred_target = pred_audio[T_src - 1 : -1]  # predictions for target positions
     gt_target = gt_audio[T_src:]  # actual target tokens
 
     T_eval = min(len(pred_target), len(gt_target))
@@ -64,10 +72,10 @@ def teacher_forced_eval(model, sample, device):
 
     correct = (pred_target == gt_target).float().mean().item()
 
-    print(f"\n=== Teacher-Forced Evaluation ===")
-    print(f"Source length: {T_src} frames ({T_src/12.5:.1f}s)")
-    print(f"Target length: {T_tgt} frames ({T_tgt/12.5:.1f}s)")
-    print(f"Target token accuracy: {correct*100:.1f}%")
+    print("\n=== Teacher-Forced Evaluation ===")
+    print(f"Source length: {T_src} frames ({T_src / 12.5:.1f}s)")
+    print(f"Target length: {T_tgt} frames ({T_tgt / 12.5:.1f}s)")
+    print(f"Target token accuracy: {correct * 100:.1f}%")
     print(f"  Predicted tokens (first 20): {pred_target[:20].tolist()}")
     print(f"  Ground truth    (first 20): {gt_target[:20].tolist()}")
 
@@ -82,8 +90,10 @@ def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
     # Start with source as prefix
     generated = src.clone()  # [1, T_src]
     text_ids = torch.full(
-        (1, T_src), TinyAyaBackbone.ZERO_PADDING,
-        dtype=torch.long, device=device,
+        (1, T_src),
+        TinyAyaBackbone.ZERO_PADDING,
+        dtype=torch.long,
+        device=device,
     )
 
     print(f"\nGenerating {max_new_tokens} target tokens from {T_src} source tokens...")
@@ -108,13 +118,15 @@ def autoregressive_generate(model, source_codes, device, max_new_tokens=150):
             # Append
             generated = torch.cat([generated, next_token], dim=1)
             text_pad = torch.full(
-                (1, 1), TinyAyaBackbone.ZERO_PADDING,
-                dtype=torch.long, device=device,
+                (1, 1),
+                TinyAyaBackbone.ZERO_PADDING,
+                dtype=torch.long,
+                device=device,
             )
             text_ids = torch.cat([text_ids, text_pad], dim=1)
 
             if (step + 1) % 50 == 0:
-                print(f"  Generated {step+1}/{max_new_tokens} tokens")
+                print(f"  Generated {step + 1}/{max_new_tokens} tokens")
 
     # Extract generated target portion
     target_tokens = generated[0, T_src:]  # [max_new_tokens]
@@ -142,7 +154,8 @@ def main():
 
     ckpt = torch.load(
         Path(args.checkpoint) / "training_state.pt",
-        map_location="cpu", weights_only=False,
+        map_location="cpu",
+        weights_only=False,
     )
     backbone.load_state_dict(ckpt["model_state_dict"], strict=False)
     backbone = backbone.to(device).eval()
@@ -163,16 +176,18 @@ def main():
     # Autoregressive generation
     tgt_len = sample["target_audio_codes"].shape[1]
     gen_tokens = autoregressive_generate(
-        backbone, sample["source_audio_codes"], device,
+        backbone,
+        sample["source_audio_codes"],
+        device,
         max_new_tokens=min(args.max_new_tokens, tgt_len),
     )
 
     # Compare generated vs ground truth
-    gt = sample["target_audio_codes"][0, :len(gen_tokens)]
+    gt = sample["target_audio_codes"][0, : len(gen_tokens)]
     gen_accuracy = (gen_tokens.cpu() == gt).float().mean().item()
-    print(f"\n=== Autoregressive Generation ===")
+    print("\n=== Autoregressive Generation ===")
     print(f"Generated {len(gen_tokens)} tokens")
-    print(f"Token accuracy vs ground truth: {gen_accuracy*100:.1f}%")
+    print(f"Token accuracy vs ground truth: {gen_accuracy * 100:.1f}%")
     print(f"  Generated (first 20): {gen_tokens[:20].tolist()}")
     print(f"  GT target (first 20): {gt[:20].tolist()}")
 
@@ -206,13 +221,13 @@ def main():
     sf.write(str(output_dir / "target_teacher_forced.wav"), tf_wav.numpy(), 24000)
     print(f"  Saved teacher-forced target audio: {output_dir}/target_teacher_forced.wav")
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print(f"All outputs saved to {output_dir}/")
-    print(f"  source.wav              - Original Turkish audio")
-    print(f"  target_gt.wav           - Ground truth Hindi audio")
-    print(f"  target_generated.wav    - Model-generated Hindi (autoregressive)")
-    print(f"  target_teacher_forced.wav - Model-predicted Hindi (teacher-forced)")
-    print(f"{'='*60}")
+    print("  source.wav              - Original Turkish audio")
+    print("  target_gt.wav           - Ground truth Hindi audio")
+    print("  target_generated.wav    - Model-generated Hindi (autoregressive)")
+    print("  target_teacher_forced.wav - Model-predicted Hindi (teacher-forced)")
+    print(f"{'=' * 60}")
 
 
 if __name__ == "__main__":

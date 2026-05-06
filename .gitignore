@@ -53,3 +53,8 @@ runs/
 
 # --- audio scratch ---
 *.wav.tmp
+
+# --- factory memory system ---
+.factory/settings.local.json
+.factory/archive/.tmp-*
+.factory/hooks/__pycache__/

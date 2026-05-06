@@ -52,6 +52,12 @@ sudo rm -f "$TARBALL_LOCAL"
 LIBPYTHON_DIR="$(dirname "$(sudo find /root/.local/share/uv/python -name 'libpython3.12.so.1.0' -type f 2>/dev/null | head -1)")"
 echo "[remote] LIBPYTHON_DIR=$LIBPYTHON_DIR"
 
+# Persistent XLA compile cache (see startup_script.sh for rationale).
+XLA_CACHE_DIR="${XLA_CACHE_DIR:-/mnt/data/xla_cache}"
+sudo mkdir -p "$XLA_CACHE_DIR"
+sudo chown root:root "$XLA_CACHE_DIR"
+echo "[remote] XLA_CACHE_DIR=$XLA_CACHE_DIR"
+
 # 4. Pull HF/W&B secrets.
 HF_TOKEN="$(gcloud secrets versions access latest --secret=hf-token)"
 WANDB_API_KEY="$(gcloud secrets versions access latest --secret=wandb-api-key 2>/dev/null || echo '')"
@@ -83,6 +89,7 @@ while true; do
     echo "[\$(date -Is)] launching train_hierarchical.py [strategy=$TPU_STRATEGY]" | tee -a /tmp/train.log
     DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
     XLA_DISABLE_FUNCTIONALIZATION=0 \
+    XLA_PERSISTENT_CACHE_PATH="$XLA_CACHE_DIR" \
     TPU_STRATEGY=$TPU_STRATEGY \
     LD_LIBRARY_PATH="$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}" \
     HF_TOKEN="$HF_TOKEN" \

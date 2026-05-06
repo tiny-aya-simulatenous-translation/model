@@ -1,6 +1,5 @@
 """Training loop with gradient accumulation, logging, and checkpointing."""
 
-import os
 import time
 from pathlib import Path
 
@@ -43,6 +42,7 @@ class Trainer:
 
         if use_wandb:
             import wandb
+
             self.wandb = wandb
 
     def train(self, dataloader, max_steps: int):
@@ -57,9 +57,9 @@ class Trainer:
         running_text_loss = 0.0
         running_audio_loss = 0.0
 
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print(f"Starting training: {max_steps} steps, accum={self.accum_steps}")
-        print(f"{'='*60}\n")
+        print(f"{'=' * 60}\n")
 
         t0 = time.time()
 
@@ -138,13 +138,15 @@ class Trainer:
                     )
 
                     if self.use_wandb:
-                        self.wandb.log({
-                            "train/loss": avg_loss,
-                            "train/text_loss": avg_text,
-                            "train/audio_loss": avg_audio,
-                            "train/grad_norm": grad_norm.item(),
-                            "train/step": global_step,
-                        })
+                        self.wandb.log(
+                            {
+                                "train/loss": avg_loss,
+                                "train/text_loss": avg_text,
+                                "train/audio_loss": avg_audio,
+                                "train/grad_norm": grad_norm.item(),
+                                "train/step": global_step,
+                            }
+                        )
 
                     running_loss = 0.0
                     running_text_loss = 0.0
@@ -154,7 +156,7 @@ class Trainer:
                 if global_step % self.save_every == 0:
                     self._save_checkpoint(global_step)
 
-        print(f"\nTraining complete: {global_step} steps in {time.time()-t0:.1f}s")
+        print(f"\nTraining complete: {global_step} steps in {time.time() - t0:.1f}s")
         self._save_checkpoint(global_step)
 
     def _save_checkpoint(self, step):
