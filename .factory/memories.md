@@ -680,15 +680,14 @@ all batch-size and memory tuning carries over unchanged. v6e-64
 multi-host is the next scale-up target once spot capacity allows.
 **Where:** `tinyaya-stage2-spot-v6e8-eu` in `europe-west4-a`; QR
 `tinyaya-stage2-spot-v6e8-eu-qr`; config
-`simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`;
+`simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`;
 checkpoint prefix
-`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/`;
-wandb run name `v6e-64-spot-canary` (kept verbatim from the YAML
-historical name).
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/`;
+wandb run name `v6e-spot-stage2-5k`.
 **Reproduce:** `TRC_PROFILE=v6e-8-eu
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr
 NODE_ID=tinyaya-stage2-spot-v6e8-eu
-CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml
+CONFIG_FILE=configs/stage2_tpu_v6e_spot.yaml
 TPU_STRATEGY=fsdpv2_lora bash scripts/tpu/launch_spot.sh`
 with patches 4-19 in `feat/tpu-support` HEAD; iter 14 also requires
 patch 20a (`gsutil cp -r` upload inside
@@ -815,7 +814,7 @@ Root cause is two independent bugs:
 **Current status:** iter 12 ran fp32 successfully (200 steps, loss 7.36).
 Long-term fix: upcast attention mask computation to fp32 while keeping
 rest of model in bf16, or patch the HF model's mask value.
-**Where:** `configs/stage2_tpu_canary_v6e_spot.yaml` precision field.
+**Where:** `configs/stage2_tpu_v6e_spot.yaml` precision field.
 
 ### 2026-05-08: v6e FD limit -- ulimit must be set before libtpu init
 **Decision:** v6e-8 with 8 chips + libtpu 0.0.21 opens ~100k file
@@ -861,7 +860,7 @@ local directory `gs:/...` instead of actual GCS. Need post-save upload.
 Root cause is two independent bugs: pytorch/xla #4152 (HF attention mask
 torch.finfo(fp32).min becomes -inf in bf16) and pytorch/xla #8591/#8778
 (v6e-specific NaN at larger batch sizes). Workaround: float32 precision.
-**Where:** `configs/stage2_tpu_canary_v6e_spot.yaml` precision field.
+**Where:** `configs/stage2_tpu_v6e_spot.yaml` precision field.
 
 ### 2026-05-08: v6e FD limit -- ulimit must be set before libtpu init
 **Decision:** v6e-8 + libtpu 0.0.21 opens ~100k FDs during eventfd init.

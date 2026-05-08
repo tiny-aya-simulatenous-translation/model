@@ -210,7 +210,7 @@ bash .factory/skills/verify/SKILL.md   # or: /verify (slash command)
 TRC_PROFILE=v6e-8-eu \
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
-CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml \
+CONFIG_FILE=configs/stage2_tpu_v6e_spot.yaml \
 TPU_STRATEGY=fsdpv2_lora \
 PROBE_FIRST=1 \
   bash simultaneous-translation/scripts/tpu/launch_spot.sh
@@ -471,10 +471,9 @@ keys, PEM private keys) — see `.factory/hooks/_lib.py`.
 Configs live in `simultaneous-translation/configs/`. The ones you
 will touch most:
 
-- `stage2_tpu_canary_v6e_spot.yaml` — short canary on v6e-8 spot
-  (CURRENT canary). `max_steps=20` (iter 13b) / `200` (next),
-  `save_every=0` (canonical end-of-training save only),
-  effective batch 16 = 1 × 2 × 8.
+- `stage2_tpu_v6e_spot.yaml` — production v6e-8 spot config
+  (CURRENT). `max_steps=5000`, `save_every=0` (canonical
+  end-of-training save only), effective batch 256 = 16 × 2 × 8.
 - `stage2_tpu_canary_v4_spot.yaml` — legacy canary on v4-32 spot.
   `max_steps=200`, `save_every=100` (preempt-resilient),
   effective batch 64 = 2 × 2 × 16.

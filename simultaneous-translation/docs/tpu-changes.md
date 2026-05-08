@@ -7,7 +7,7 @@ this branch first landed (Colab v5e-1, then v4-32 spot canary in
 `us-central2-b`). The active canary has since pivoted to **single-
 host TPU v6e-8 in `europe-west4-a`** (QR
 `tinyaya-stage2-spot-v6e8-eu-qr`, config
-`configs/stage2_tpu_canary_v6e_spot.yaml`). On v6e-8 there is exactly
+`configs/stage2_tpu_v6e_spot.yaml`). On v6e-8 there is exactly
 ONE Python process (single-host SPMD) driving all 8 chips, so the
 multi-host coordination patches (host-index gating, wandb shared-
 mode rendezvous, GCS run-id polling) are inert; they remain in the

@@ -263,7 +263,7 @@ by raising effective batch and instrumenting the run for live HBM
 DEFERRED to iter 19 to keep iter 18 baseline clean.
 
 - [ ] Lever 1 -- `batch_size: 8 -> 16` in
-  `configs/stage2_tpu_canary_v6e_spot.yaml` (KEEP
+  `configs/stage2_tpu_v6e_spot.yaml` (KEEP
   `xla_grad_checkpoint: true`).
 - [ ] Lever 2 -- `data.max_frames: 300 -> 400` in same config.
 - [ ] Lever 3 -- patch `tpu_backend.py:get_memory_info` to call

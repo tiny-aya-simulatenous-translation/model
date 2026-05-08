@@ -27,7 +27,7 @@ uv run python -m py_compile $(git ls-files '*.py')  # quick lint
 TRC_PROFILE=v6e-8-eu \
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
-CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml \
+CONFIG_FILE=configs/stage2_tpu_v6e_spot.yaml \
 TPU_STRATEGY=fsdpv2_lora \
   bash scripts/tpu/launch_spot.sh
 

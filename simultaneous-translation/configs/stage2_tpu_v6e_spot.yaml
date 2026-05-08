@@ -1,31 +1,19 @@
-# Canary config -- TPU v6e-64 SPOT in europe-west4-a or us-east1-d.
+# TPU v6e SPOT production config (single-host v6e-8 in europe-west4-a).
 #
 # WHY THIS EXISTS
 # ---------------
-# Final fallback in the autonomous TRC capacity tree (see
-# docs/tpu-capacity-log.md section 1). v6e is the newest generation
-# in the TRC grant; if neither v4 nor v5e materialise, v6e in
-# us-east1-d or europe-west4-a is the last spot option.
+# Topology pivot: validated on single-host v6e-8 over iters 17-20;
+# multi-host v6e-64 / v4-32 had cross-host SPMD issues that were
+# sidestepped by running on one host. This config drives the main
+# 5000-step Phase 5 production run on v6e-8.
 #
-# v6e has the same 32 GiB HBM/chip as v4 (vs v5e's 16 GiB), so the
-# batch_size and memory tuning resembles the v4 spot config more
-# than the v5e spot config.
-#
-# Differences vs configs/stage2_tpu_canary_v4_spot.yaml:
-#   * v6e-64 is 8 hosts x 8 chips/host = 64 chips
-#     (v4-32 was 4 hosts x 4 chips/host = 16 chips)
-#     -> 4x more chips for data parallelism
-#   * Effective batch held at 2 * 1 * 64 = 128 by trimming
-#     grad_accum from 4 (v4-32) to 1 (v6e-64).
+# v6e has 32 GiB HBM/chip. iter 19/20 measured peak HBM at 22.67 GiB
+# (72.5%) under batch=16 + grad_ckpt + max_frames=400.
 #
 # Usage:
-#   TRC_PROFILE=v6e-64-ue1d \
-#   QR_NAME=tinyaya-stage2-spot-v6e-canary-qr \
-#   NODE_ID=tinyaya-stage2-spot-v6e-canary \
-#   CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml \
-#   TPU_STRATEGY=fsdpv2_lora \
-#   PROBE_FIRST=1 \
-#     bash scripts/tpu/launch_spot.sh
+#   gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu \
+#     --zone=europe-west4-a --worker=0 \
+#     --command='sudo bash /tmp/launch_train_v6e_v2.sh'
 #
 # See also: docs/tpu-trc-allocation.md  (TRC quotas)
 
@@ -46,8 +34,8 @@ data:
   pin_memory: false
 
 # ---------------------------------------------------------------------
-# Train: v6e-64 spot retune.
-# Effective batch = 2 * 1 * 64 = 128.
+# Train: single-host v6e-8 spot.
+# Effective batch = batch_size * grad_accum * 8 chips = 16 * 2 * 8 = 256.
 # ---------------------------------------------------------------------
 train:
   num_codebooks: 8
@@ -60,8 +48,12 @@ train:
   # ~22-26 GB (~80%, OOM tail risk) -- deferred to iter 19+.
   batch_size: 16
   grad_accum: 2
-  max_steps: 200
-  warmup_steps: 50
+  # iter 21: main 5000-step production run (Phase 5).
+  # 5000 * 4.28 s/step = 21400 s = 357 min = ~6.0 h wall clock,
+  # plus ~25 min first-step compile -> ~6.4 h end-to-end.
+  # warmup_steps=200 = 4% of total (standard 1-5% warmup band).
+  max_steps: 5000
+  warmup_steps: 200
   depth_chunk_size: 16
   # iter 14: bf16 with attention-mask monkey-patch (train_hierarchical.py
   # _patch_attention_mask_for_bf16 clamps mask values >= -1e4 to avoid
@@ -110,10 +102,10 @@ logging:
   # FSDPv2-XLA. The end-of-training canonical save (patch 19) is the
   # only save attempt; it is gated by train.final_canonical_save.
   save_every: 0
-  audio_every: 100
-  val_every: 100
-  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary
+  audio_every: 1000
+  val_every: 500
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot
   keep_last_n: 5
   use_wandb: true
   wandb_project: tinyaya-stage2-tpu
-  wandb_run_name: v6e-64-spot-canary
+  wandb_run_name: v6e-spot-stage2-5k

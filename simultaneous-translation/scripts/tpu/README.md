@@ -8,7 +8,7 @@ hardware via the Queued Resource API.
 The active canary topology is **single-host TPU v6e-8 spot in
 `europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
 `tinyaya-stage2-spot-v6e8-eu`, profile shorthand `v6e-8-eu`,
-config `configs/stage2_tpu_canary_v6e_spot.yaml`). On v6e-8 there
+config `configs/stage2_tpu_v6e_spot.yaml`). On v6e-8 there
 is one host with 8 chips and ONE Python process driving them via
 SPMD. v4-32 spot in `us-central2-b` (4 hosts) is currently
 SUSPENDED and treated as a Legacy path (see "Legacy v4 examples"
@@ -88,7 +88,7 @@ bash simultaneous-translation/scripts/tpu/setup_gcp.sh
 TRC_PROFILE=v6e-8-eu \
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
-CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml \
+CONFIG_FILE=configs/stage2_tpu_v6e_spot.yaml \
 TPU_STRATEGY=fsdpv2_lora \
 PROBE_FIRST=1 \
   bash simultaneous-translation/scripts/tpu/launch_spot.sh
