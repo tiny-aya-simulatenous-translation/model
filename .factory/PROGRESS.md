@@ -26,6 +26,25 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-08T12:34:53Z | feat/tpu-support@61b87fb | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T12:34:17Z | feat/tpu-support@61b87fb | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T12:34:03Z | feat/tpu-support@61b87fb | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T11:39:00Z | feat/tpu-support@61b87fb | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
 ## 2026-05-08T10:56:29Z | feat/tpu-support@9131e0f | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
 

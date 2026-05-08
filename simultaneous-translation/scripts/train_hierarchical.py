@@ -787,7 +787,13 @@ def main():
             f"batch={cfg['train']['batch_size']} ==="
         )
     model.train()
-    optimizer.zero_grad()
+    # iter 22: set_to_none=False keeps every .grad slot allocated as a
+    # zero tensor between optimizer steps, so the lever 6 clip and any
+    # FSDPv2 reduce-scatter sees a stable parameter set on EVERY step.
+    # Default set_to_none=True can leave .grad=None for params that
+    # didn't receive gradient flow this step, and that variance was
+    # the trigger for the iter 21 OOM at step 258.
+    optimizer.zero_grad(set_to_none=False)
 
     # On TPU/SPMD, calling .item() / .cpu() inside the training loop forces
     # an XLA materialise-and-transfer that BLOCKS until the entire lazy
@@ -903,20 +909,35 @@ def main():
         if is_tpu:
             import torch_xla.core.xla_model as _xm
             max_grad_norm = cfg["train"].get("max_grad_norm", 1.0)
-            # Fused single-graph clip (variant 6a)
+            # Fused single-graph clip (variant 6a).
+            # iter 22 fix: iterate by `p.requires_grad` (a STATIC
+            # attribute of each parameter) rather than `p.grad is
+            # not None` (a DYNAMIC attribute that can change per
+            # step). Iter 21 hit a permanent OOM compile at step
+            # 258 because the set of params with non-None grads
+            # changed across steps, producing a new HLO graph that
+            # required 89 GiB HLO temp. Iterating by requires_grad
+            # keeps the graph topology stable, and ensures any
+            # parameter without a current gradient contributes 0 to
+            # total_sq_norm via a freshly allocated zero tensor.
             total_sq = torch.tensor(0.0, device=device)
             for p in model.parameters():
-                if p.grad is not None:
-                    total_sq = total_sq + (p.grad.float() ** 2).sum()
+                if not p.requires_grad:
+                    continue
+                if p.grad is None:
+                    p.grad = torch.zeros_like(p)
+                total_sq = total_sq + (p.grad.float() ** 2).sum()
             total_norm = total_sq.sqrt()
             clip_coef = max_grad_norm / (total_norm + 1e-6)
-            # Only clip if coef < 1 (i.e. norm exceeds max_grad_norm)
             clip_coef = torch.where(
                 clip_coef < 1.0, clip_coef, torch.ones_like(clip_coef)
             )
             for p in model.parameters():
-                if p.grad is not None:
-                    p.grad.mul_(clip_coef)
+                if not p.requires_grad:
+                    continue
+                if p.grad is None:
+                    p.grad = torch.zeros_like(p)
+                p.grad.mul_(clip_coef)
             _xm.mark_step()
             grad_norm = total_norm
         else:
@@ -929,7 +950,10 @@ def main():
 
         backend.optimizer_step(optimizer)
         scheduler.step(step + 1)
-        optimizer.zero_grad()
+        # iter 22: keep grads allocated as zero (see top-of-loop
+        # comment) so the next step's lever 6 clip sees the same
+        # parameter set as this one.
+        optimizer.zero_grad(set_to_none=False)
         step += 1
         if step in (1, 2, 5, 10, 25, 50):
             if hasattr(backend, "diagnose"):
