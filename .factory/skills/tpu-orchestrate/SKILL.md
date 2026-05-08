@@ -37,6 +37,25 @@ PATCH -> DEPLOY -> WATCH (poll every 5-10 min)
   procedure (rsync + tmux restart). Call after every PATCH.
 - **AskUser**: the 4-option check-in dialog. Mandatory at the cadence.
 
+## Mandatory: announce the wandb URL on every new run
+
+Whenever a NEW wandb run is created (i.e. the training process has just
+called `wandb.init()` and a new `run_id` appears in `gs://tinyaya-stage2-tpu/wandb-rendezvous/`
+or in the tmux log via the line `wandb: 🚀 View run at https://wandb.ai/...`),
+you MUST surface the run URL to the user on its own line as soon as you
+notice it. A run is considered "new" if its run_id is not the one you
+already announced for the current iteration.
+
+What to share, in this order:
+1. The full wandb run URL: `https://wandb.ai/<entity>/<project>/runs/<run_id>`
+2. The run name (e.g. `v6e-64-spot-canary`) and run_id
+3. A one-line note about what is unique about this iteration (config
+   knobs that differ from the previous iter, e.g. "fp32 precision,
+   batch=1, accum=2 -- iter 12 attempt #2 after bf16 NaN")
+
+Do this even if the run is still in compile / before the first
+`step=` line, so the user can open the dashboard while waiting.
+
 ## Diagnosis -> Recovery table (the playbook)
 
 Match priority: top-to-bottom. First regex hit wins.

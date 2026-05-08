@@ -158,6 +158,51 @@ cost: ~20% more flops, ~50x faster wall-time vs recompile.
 padding path; `cfg.data.max_frames` is the truth source.
 **Reference:** pytorch/xla user-guide -- "Avoiding Recompilations".
 
+### 2026-05-08: Patch 19 -- canonical end-of-training save for FSDPv2-XLA
+**Decision (gotcha):** `model.save_pretrained` does NOT support
+saving models that are still resident on a TPU device, even when a
+pre-built CPU `state_dict` is passed via the `state_dict=` kwarg.
+The function internally re-walks the model's submodules
+(`named_parameters`, `state_dict()` introspection inside
+`get_peft_model_state_dict`), and on FSDPv2 those walks trigger SPMD
+collectives that hang forever in our setup because only host 0 ever
+reaches the inner save logic.
+
+**Empirical evidence:** iters 9, 10, 11 all reached step 100 with
+loss 7.5983 (deterministic), then deadlocked all 4 v4-32 workers at
+`futex_wait_queue` inside `save_checkpoint` -> `save_pretrained` ->
+safetensors path. Patches 14/16/17 (split materialize/write phases,
+all hosts call the function) were necessary but not sufficient.
+
+**Canonical fix (HF transformers issue #36004, closed Dec 2025):**
+```python
+model.to("cpu")     # SPMD-wide gather; ALL hosts call this
+unwrap_model(model).save_pretrained(...)  # CPU model now; safe
+```
+The `.to("cpu")` collective on a wrapped FSDPv2 model gathers every
+shard onto host RAM in a single pass; afterwards `save_pretrained`
+walks an ordinary CPU module with no XLA tensors involved.
+
+**Trade-off / scope:** `.to("cpu")` is destructive to FSDPv2
+sharding metadata. Training cannot continue after this call; the
+SPMD partitioner forgets the per-layer mesh annotations and
+re-running `backend.wrap_model(model)` would not reproduce the
+sharding without a fresh recompile. So this is **end-of-training
+only**, gated on `cfg.train.final_canonical_save`.
+
+**Implementation:**
+- new `save_checkpoint_canonical_final(model, save_dir, *, is_main)`
+  in `src/training/checkpointing.py`.
+- wired into `scripts/train_hierarchical.py` end-of-training block.
+- DEFAULT FALSE for iter 12 (validate step 200 reached first); will
+  flip to TRUE for iter 13 once we know the loop is healthy.
+
+**Where:**
+`simultaneous-translation/src/training/checkpointing.py` ::
+`save_checkpoint_canonical_final` (new function near top of file).
+`simultaneous-translation/scripts/train_hierarchical.py` end-of-loop
+block (just below the patch 18b save_every gate).
+
 ### 2026-05-06: Patches 12 + 13 -- defer audio sample + validation on TPU canary (drafted)
 **Decision (drafted, not yet validated):** during canary
 (`max_steps <= 200`), skip `generate_audio_sample` and
@@ -612,3 +657,91 @@ explicitly. Do not rely on `which` under sudo on a fresh TPU VM.
   date for the `launch_spot.sh` invocation.
 
 (Next milestone will be the 5000-step run completing.)
+
+### 2026-05-08: Patch 19 validated -- canonical end-of-training save works on v6e-8
+**Decision:** `save_checkpoint_canonical_final()` in `checkpointing.py` does
+`model.to("cpu")` per-submodule (gather all FSDPv2 shards to host RAM),
+then host-0 writes via `save_pretrained(safe_serialization=False)` plus
+`torch.save()` for plain modules. A CPU verification assertion checks
+no XLA tensors remain before writing. The function is gated by
+`cfg.train.final_canonical_save` (default False).
+**Reason:** Iters 9/10/11 deadlocked at `PEFT.save_pretrained` on FSDPv2-XLA
+(pytorch/xla #36004: save_pretrained doesn't support TPU-resident models).
+The canonical fix is `model.to("cpu")` before save, which gathers all shards
+in a single collective. On single-host v6e-8 this works cleanly; on
+multi-host v4-32 all hosts must call `.to("cpu")` together (SPMD gather).
+**`safe_serialization=False`** is required because safetensors cannot access
+XLA storage pointers (HF #29608: `RuntimeError: Attempted to access the
+data pointer on an invalid python storage`).
+**Known limitation:** If save_dir is a gs:// URI, `torch.save` writes to a
+local directory `gs:/...` instead of actual GCS. Need post-save upload.
+**Where:** `simultaneous-translation/src/training/checkpointing.py`
+`save_checkpoint_canonical_final`; wired into `train_hierarchical.py:1065`.
+
+### 2026-05-08: v6e bf16 NaN -- must use float32 or fix attention mask
+**Decision:** v6e-8 + torch_xla 2.9 + bfloat16 produces NaN loss at step 1.
+Root cause is two independent bugs:
+1. pytorch/xla #4152: HF transformers uses `torch.finfo(fp32).min = -3.4e38`
+   in attention masks; when cast to bf16 this becomes `-inf`, then
+   `(1-mask)*-inf = NaN`. Fix: either run `model.to(bfloat16)` BEFORE
+   mask construction so `torch.finfo(bfloat16).min` is used, or replace
+   `torch.finfo(dtype).min` with a safe constant like -10000.
+2. pytorch/xla #8591/#8778: v6e-specific NaN at larger batch sizes even
+   without the HF mask issue. Appears to be a v6e libtpu numerics bug.
+   Workaround: use float32 precision (2x memory, 40x slower per step
+   due to no bf16 matmul acceleration on TPU).
+**Current status:** iter 12 ran fp32 successfully (200 steps, loss 7.36).
+Long-term fix: upcast attention mask computation to fp32 while keeping
+rest of model in bf16, or patch the HF model's mask value.
+**Where:** `configs/stage2_tpu_canary_v6e_spot.yaml` precision field.
+
+### 2026-05-08: v6e FD limit -- ulimit must be set before libtpu init
+**Decision:** v6e-8 with 8 chips + libtpu 0.0.21 opens ~100k file
+descriptors during `eventfd_interrupt_async` init. The systemd-managed
+startup_script inherited LimitNOFILE=100000 (or lower), causing
+`eventfd() = -1: Too many open files` crash before any XLA compile.
+Fix: launch training with explicit `ulimit -n 1048576` in the tmux
+session, NOT via the systemd startup_script. The dedicated launcher
+`/tmp/launch_train_v6e_v2.sh` handles this correctly.
+**Where:** TPU host `/tmp/launch_train_v6e_v2.sh` (uploaded per QR).
+
+### 2026-05-08: v6e-8 spot provisioning notes
+**Decision:** v6e-8 spot instances in us-east1-d get preempted within
+15 min during maintenance events. europe-west4-a has better capacity
+(4:44 to ACTIVE). v6e-64 (8-host) fails at PROVISIONING with code 13
+"internal error" (16-host alignment failure). v5litepod-8 spot quota
+is 4 chips in us-central1-a (TRC promised 64; reality is 4). v4-32
+spot QR has been SUSPENDED for hours (no capacity).
+**Recommendation:** For production runs, use v4 on-demand (no preemption)
+or v6e-8 spot in EU. Avoid v6e-64 spot and v5litepod spot.
+
+### 2026-05-08: Patch 19 validated -- canonical end-of-training save works on v6e-8
+**Decision:** `save_checkpoint_canonical_final()` in `checkpointing.py` does
+`model.to("cpu")` per-submodule (gather all FSDPv2 shards to host RAM),
+then host-0 writes via `save_pretrained(safe_serialization=False)` plus
+`torch.save()` for plain modules. A CPU verification assertion checks
+no XLA tensors remain before writing. The function is gated by
+`cfg.train.final_canonical_save` (default False).
+**Reason:** Iters 9/10/11 deadlocked at `PEFT.save_pretrained` on FSDPv2-XLA
+(pytorch/xla #36004: save_pretrained doesn't support TPU-resident models).
+The canonical fix is `model.to("cpu")` before save, which gathers all shards
+in a single collective. On single-host v6e-8 this works cleanly; on
+multi-host v4-32 all hosts must call `.to("cpu")` together (SPMD gather).
+**safe_serialization=False** is required because safetensors cannot access
+XLA storage pointers (HF #29608).
+**Known limitation:** If save_dir is a gs:// URI, torch.save writes to a
+local directory `gs:/...` instead of actual GCS. Need post-save upload.
+**Where:** `simultaneous-translation/src/training/checkpointing.py`
+`save_checkpoint_canonical_final`; wired into `train_hierarchical.py:1065`.
+
+### 2026-05-08: v6e bf16 NaN -- must use float32 or fix attention mask
+**Decision:** v6e-8 + torch_xla 2.9 + bfloat16 produces NaN loss at step 1.
+Root cause is two independent bugs: pytorch/xla #4152 (HF attention mask
+torch.finfo(fp32).min becomes -inf in bf16) and pytorch/xla #8591/#8778
+(v6e-specific NaN at larger batch sizes). Workaround: float32 precision.
+**Where:** `configs/stage2_tpu_canary_v6e_spot.yaml` precision field.
+
+### 2026-05-08: v6e FD limit -- ulimit must be set before libtpu init
+**Decision:** v6e-8 + libtpu 0.0.21 opens ~100k FDs during eventfd init.
+systemd startup_script LimitNOFILE was too low. Fix: launch with explicit
+`ulimit -n 1048576` via /tmp/launch_train_v6e_v2.sh.

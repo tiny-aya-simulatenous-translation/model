@@ -150,6 +150,100 @@ def save_checkpoint(
         json.dump(meta, f, indent=2)
 
 
+def save_checkpoint_canonical_final(
+    model,
+    save_dir: str,
+    *,
+    is_main: bool = True,
+):
+    """End-of-training canonical save for FSDPv2-wrapped XLA models.
+
+    DESTRUCTIVE: this function moves the entire wrapped model from the
+    XLA device onto host CPU, which destroys FSDPv2 sharding metadata.
+    Training cannot continue after this call -- only invoke at the
+    final step. All hosts MUST call this function (``model.to("cpu")``
+    is an SPMD-wide gather; the gather hangs forever if any host skips
+    it). Only the global primary writes files.
+
+    Why this exists
+    ---------------
+    Iters 9, 10, 11 all reached step 100 then deadlocked all 4 hosts
+    at ``futex_wait_queue`` inside ``PEFT.save_pretrained``, even after
+    patches 14/16/17 made every host build a CPU state_dict and pass
+    it via ``state_dict=peft_state``. Root cause (per HF transformers
+    issue #36004, closed Dec 2025): ``save_pretrained`` does not
+    support saving models that are still resident on a TPU device --
+    it internally re-walks the model's submodules, which on FSDPv2
+    triggers XLA collectives that the global state cannot satisfy.
+    The canonical fix is to call ``model.to("cpu")`` on the full
+    wrapped model (gathering all shards in a single collective) BEFORE
+    calling save_pretrained. After that, save_pretrained walks an
+    ordinary CPU module with no XLA tensors involved.
+
+    The trade-off is that ``model.to("cpu")`` is destructive on
+    FSDPv2: the SPMD partitioner forgets the per-layer mesh
+    annotations, and re-running ``backend.wrap_model(model)`` would
+    not reproduce the original sharding without a fresh recompile.
+    For our canary loop that is acceptable -- we save once at step
+    ``max_steps`` and exit.
+
+    GPU vs TPU note
+    ---------------
+    On non-XLA backends this function delegates to ``save_checkpoint``
+    with optimizer/scheduler set to ``None`` (the canary doesn't need
+    them in the final artefact).
+    """
+    is_xla = _is_xla_tensor(next(model.parameters(), None))
+
+    if not is_xla:
+        save_checkpoint(
+            model,
+            optimizer=None,
+            scheduler=None,
+            step=-1,
+            save_dir=save_dir,
+            is_main=is_main,
+        )
+        return
+
+    import torch_xla.core.xla_model as xm
+
+    xm.mark_step()
+    xm.wait_device_ops()
+
+    for sub in (
+        model.backbone.model,
+        model.projection,
+        model.depth_decoder,
+        model.backbone.text_embed,
+        model.backbone.audio_heads,
+    ):
+        sub.to("cpu")
+
+    xm.rendezvous("post_to_cpu_canonical_final")
+
+    if not is_main:
+        return
+
+    for name, p in model.named_parameters():
+        assert not _is_xla_tensor(p), (
+            f"canonical_final: parameter {name} still on XLA after .to(cpu)"
+        )
+
+    os.makedirs(save_dir, exist_ok=True)
+
+    peft_dir = os.path.join(save_dir, "peft_adapter")
+    model.backbone.model.save_pretrained(peft_dir, safe_serialization=False)
+
+    torch.save(model.projection.state_dict(), os.path.join(save_dir, "projection.pt"))
+    torch.save(model.depth_decoder.state_dict(), os.path.join(save_dir, "depth_decoder.pt"))
+    torch.save(model.backbone.text_embed.state_dict(), os.path.join(save_dir, "text_embed.pt"))
+    torch.save(model.backbone.audio_heads.state_dict(), os.path.join(save_dir, "audio_heads.pt"))
+
+    with open(os.path.join(save_dir, "metadata.json"), "w") as f:
+        json.dump({"step": "final", "save_kind": "canonical_final"}, f, indent=2)
+
+
 def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:
     from peft.utils.save_and_load import load_peft_weights, set_peft_model_state_dict
 

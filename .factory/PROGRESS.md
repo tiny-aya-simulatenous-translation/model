@@ -26,6 +26,174 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-08T04:32:37Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T03:50:44Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T03:33:09Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T03:32:23Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/checkpointing.py`
+
+
+## 2026-05-08T03:13:17Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-orchestrate/SKILL.md`
+
+
+## 2026-05-08T03:07:44Z | feat/tpu-support@dccb7a1 | done | edit
+created `/tmp/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T03:05:53Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T03:05:52Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T02:49:31Z | feat/tpu-support@dccb7a1 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T02:29:20Z | feat/tpu-support@dccb7a1 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/v6e8_eu_qr_watch.sh`
+
+
+## 2026-05-08T01:42:18Z | feat/tpu-support@dccb7a1 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/v6e8_qr_watch.sh`
+
+
+## 2026-05-08T01:20:39Z | feat/tpu-support@dccb7a1 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T01:19:01Z | feat/tpu-support@dccb7a1 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/v6e_qr_watch.sh`
+
+
+## 2026-05-08T01:17:48Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T01:17:37Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T01:12:22Z | feat/tpu-support@dccb7a1 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T01:06:07Z | feat/tpu-support@dccb7a1 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T01:00:56Z | feat/tpu-support@dccb7a1 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T00:49:27Z | feat/tpu-support@dccb7a1 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T00:48:49Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
+
+
+## 2026-05-08T00:48:09Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PROGRESS.md`
+
+
+## 2026-05-08T00:48:00Z | feat/tpu-support@dccb7a1 | done | decide
+patch 19 staged: end-of-training canonical save (HF #36004 fix)
+
+Root-cause confirmed via Exa research (HF transformers issues #36004,
+#29388, #29659): `PEFT.save_pretrained` does NOT support saving
+models that are still resident on a TPU device, even when a CPU
+state_dict is passed via `state_dict=peft_state` kwarg. The function
+internally re-walks the model's submodules (named_parameters /
+state_dict introspection inside get_peft_model_state_dict), which on
+an FSDPv2-wrapped XLA model triggers SPMD collectives that can never
+complete because only host 0 entered the function. Patches 14/16/17
+materializing CPU state_dicts on every host were necessary but not
+sufficient -- the deadlock is INSIDE save_pretrained itself.
+
+Canonical fix (HF #36004 closed Dec 2025):
+    model.to("cpu")           # SPMD gather; ALL hosts call this
+    unwrap_model(model).save_pretrained(...)  # now CPU; no XLA hooks
+
+`model.to("cpu")` moves the entire wrapped model onto host RAM in
+one collective. After that, save_pretrained walks an ordinary CPU
+module with no XLA tensors involved. Trade-off: this is destructive
+to FSDPv2 sharding metadata, so we can only invoke it ONCE at the
+final step (training cannot continue afterward).
+
+Implementation:
+- new `save_checkpoint_canonical_final(model, save_dir, *, is_main)`
+  in `src/training/checkpointing.py` -- moves all 5 sub-modules
+  (backbone.model, projection, depth_decoder, text_embed,
+  audio_heads) to CPU on every host, rendezvous, then host 0 writes
+  files via `save_pretrained(safe_serialization=True)` + `torch.save`.
+- wired into `scripts/train_hierarchical.py` end-of-training block,
+  gated on `cfg.train.final_canonical_save` (default false).
+- DEFAULT DISABLED for iter 12 per user direction "validate step 200
+  first; fix saves later". Will be enabled for iter 13.
+
+py_compile + ruff clean on both files.
+
+
+## 2026-05-08T00:46:38Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T00:46:22Z | feat/tpu-support@dccb7a1 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/checkpointing.py`
+
+
+## 2026-05-08T00:42:00Z | feat/tpu-support@dccb7a1 | block | exec
+spot v4-32 QR preempted by SERVICE during iter 11
+
+`tinyaya-stage2-spot-v4-canary-qr` flipped to
+`state=SUSPENDED;stateInitiator=SERVICE` while iter 11 was at T+9
+(still in compile). All 4 worker VMs returned NOT_FOUND.
+
+Tier 3 escalation per `tpu-orchestrate` skill. Committed dccb7a1
+(13 files, +2300 lines) to preserve work. Started backgrounded
+QR poller (`_artifacts/qr_resume_poll.sh`, PID 17201) -- polls
+every 60s, will append `>>> RESUMED <<<` once state flips to
+ACTIVE.
+
+Resuming iter 12+ on QR resurrection.
+
+
+## 2026-05-08T00:40:19Z | feat/tpu-support@dccb7a1 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/qr_resume_poll.sh`
+
+
 ## 2026-05-08T00:34:45Z | feat/tpu-support@ee01024 | info | session
 SessionEnd (other): 22 item(s) carried forward
 
@@ -1346,3 +1514,40 @@ Sub-3-minute redeploy without QR re-create.
 - Re-test `fsdpv2_lora` compile time with `scan_layers` enabled.
 - Restore canary `max_frames` from 64 back to 300 once compile is fast.
 - Run full 5000-step training and confirm checkpointing + W&B logging.
+
+### 2026-05-08 04:15 UTC | feat/tpu-support | patch-19-validation
+
+**Status:** SUCCESS
+**Kind:** milestone
+**Detail:**
+Patch 19 (canonical end-of-training save) validated on v6e-8 single-host
+europe-west4-a. Training completed 20 steps (fp32, batch=1, accum=2) with
+loss 9.94 -> 8.78 (decreasing). The canonical save executed successfully:
+`model.to("cpu")` gathered all FSDPv2 shards onto host RAM without deadlock,
+then `save_pretrained(safe_serialization=False)` wrote all components.
+Checkpoint artifacts confirmed:
+  - peft_adapter/adapter_model.bin (7 MB, LoRA adapters)
+  - peft_adapter/adapter_config.json (LoRA config)
+  - projection.pt (16 MB), depth_decoder.pt (1.4 GB),
+    text_embed.pt (1.0 GB), audio_heads.pt (8 MB)
+  - metadata.json {"step": "final", "save_kind": "canonical_final"}
+  - Total: 2.4 GB
+
+Known issue: save_dir was set to a gs:// URI, but torch.save wrote to a
+local directory named `gs:/...` instead of actual GCS. Need to add a
+post-save gsutil cp step or use gcsfs.
+
+Earlier in this session:
+  - v6e-8 in us-east1-d: preempted during maintenance event
+  - v6e-8 in us-east1-d (2nd attempt): SUSPENDED for 28 min, no recovery
+  - v6e-8 in europe-west4-a: ACTIVE at T+4:44 (fastest yet)
+  - v6e bf16 NaN at step 1: diagnosed as pytorch/xla #4152 (HF attention
+    mask torch.finfo(fp32).min -> -inf in bf16) + #8591 (v6e-specific
+    batch-size-dependent NaN). Fixed by switching to float32 precision.
+  - "Too many open files" crash: systemd startup_script inherited
+    LimitNOFILE=100000. Fixed by launching via explicit `ulimit -n 1048576`
+    in a dedicated launcher script (/tmp/launch_train_v6e_v2.sh).
+  - fd limit root cause: v6e 8-chip topology + libtpu eventfd interrupts
+    create ~100k FDs during init, exceeding default ulimit. The systemd-
+    managed startup_script had LimitNOFILE=100000 but tmux child inherited
+    a lower limit.

@@ -1054,6 +1054,23 @@ def main():
             extra_state={"config": cfg, "final": True},
             is_main=is_main,
         )
+
+    # patch 19: end-of-training canonical save (HF transformers issue
+    # #36004 fix). Opt-in via cfg.train.final_canonical_save. This
+    # bypasses the save_every gate -- with save_every=0 (patch 18a),
+    # this is the only chance to land a checkpoint in GCS. Destructive:
+    # model.to("cpu") loses FSDPv2 sharding metadata, so this only runs
+    # once at the very end of training. ALL hosts must reach this call;
+    # the SPMD gather inside .to("cpu") deadlocks if any host skips it.
+    if cfg["train"].get("final_canonical_save", False):
+        from src.training.checkpointing import save_checkpoint_canonical_final
+
+        d_final = save_dir / f"step_{step:06d}_final"
+        if is_main:
+            print(f"\n[patch 19] entering canonical final save -> {d_final}")
+        save_checkpoint_canonical_final(unwrapped, str(d_final), is_main=is_main)
+        if is_main:
+            print("[patch 19] canonical final save complete")
     if is_main:
         print(f"\nTraining complete: {step} steps in {(time.time() - t0) / 60:.1f} min")
         if save_every and push_to_hub and hub_repo_id:

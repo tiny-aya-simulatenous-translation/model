@@ -46,12 +46,19 @@ data:
 # ---------------------------------------------------------------------
 train:
   num_codebooks: 8
-  batch_size: 2
-  grad_accum: 1
+  # batch=1, accum=2 matches iter 7's effective batch shape better.
+  # Combined with float32 precision, this bisects the v4 vs v6e gap.
+  batch_size: 1
+  grad_accum: 2
   max_steps: 200
   warmup_steps: 50
   depth_chunk_size: 16
-  precision: bfloat16
+  # NOTE iter 12: bf16 + LoRA + v6e produced NaN forward pass at
+  # step 1. v4-32 (iter 7) worked with bf16, but v6e has different
+  # bf16 numerics. Switching to float32 to confirm. If float32
+  # works, the long-term fix is to upcast a few critical layers
+  # (layernorm, softmax) while keeping rest in bf16.
+  precision: float32
 
   # Same disable as the v4 canary. v6e has 32 GiB/chip like v4, so
   # the activation budget is the same; canary should compile and
@@ -61,6 +68,16 @@ train:
   # persistent cache deserialize broken on torch_xla 2.9).
   use_scan_layers: false
   xla_grad_checkpoint: false
+
+  # Patch 19 (HF transformers issue #36004 fix): destructive end-of-
+  # training save. Moves the entire FSDPv2-wrapped model to CPU on all
+  # hosts (SPMD gather), then host-0 calls save_pretrained on the
+  # now-CPU model. Avoids the deadlock that hit iters 9/10/11 inside
+  # PEFT.save_pretrained on the XLA model. Disabled for iter 12 so we
+  # can validate that the loop reaches step 200 first; flip to true
+  # for iter 13 once the loop is healthy. iter 12 completed step 200
+  # with decreasing loss -> now enabling for iter 13 save-bug validation.
+  final_canonical_save: true
 
 loss:
   text_weight: 0.1
@@ -76,7 +93,11 @@ optim:
 
 logging:
   log_every: 10
-  save_every: 100
+  # Patch 18a: save_every=0 disables the periodic save that deadlocks
+  # all 4 hosts at futex_wait_queue inside PEFT.save_pretrained on
+  # FSDPv2-XLA. The end-of-training canonical save (patch 19) is the
+  # only save attempt; it is gated by train.final_canonical_save.
+  save_every: 0
   audio_every: 100
   val_every: 100
   save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary
