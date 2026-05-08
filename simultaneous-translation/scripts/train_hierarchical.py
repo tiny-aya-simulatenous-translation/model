@@ -489,12 +489,21 @@ def main():
     # multi-host pods would collide on port 9012. Single-host v6e-8
     # has one process so this is unconditional once is_main passes.
     is_tpu_early = (cfg.get("backend", "auto") == "tpu")
+    # iter 20 fix: the return value of xp.start_server() must be
+    # bound to a long-lived name. Per torch_xla.debug.profiler
+    # docstring: "If this object is garbage collected, the profiler
+    # server is shut down." Iter 17-19 dropped the return value, so
+    # the gRPC server died immediately after the print statement and
+    # the external xp.trace() always got "Connection refused". Stash
+    # it on `main` itself so it survives until interpreter exit.
+    main._xp_profiler_server = None
     if is_tpu_early and is_main:
         try:
             import torch_xla.debug.profiler as xp
             xp_port = int(os.environ.get("XLA_PROFILER_PORT", "9012"))
-            xp.start_server(xp_port)
-            print(f"[profiler] xp.start_server listening on :{xp_port}",
+            main._xp_profiler_server = xp.start_server(xp_port)
+            print(f"[profiler] xp.start_server listening on :{xp_port}"
+                  f" (server obj retained: {main._xp_profiler_server!r})",
                   flush=True)
         except Exception as e:
             print(f"[profiler] xp.start_server failed: {e}", flush=True)

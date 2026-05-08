@@ -26,6 +26,40 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-08T09:58:10Z | feat/tpu-support@7073d77 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/smoke_profiler.py`
+
+
+## 2026-05-08T09:50:29Z | feat/tpu-support@7073d77 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T09:44:34Z | feat/tpu-support@7073d77 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T09:44:08Z | feat/tpu-support@7073d77 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T09:43:37Z | feat/tpu-support@7073d77 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/capture_xla_profile.py`
+
+
+## 2026-05-08T09:41:11Z | feat/tpu-support@7073d77 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T09:35:09Z | feat/tpu-support@7073d77 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
 ## 2026-05-08T09:11:53Z | feat/tpu-support@2400ada | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/backend/tpu_backend.py`
 
