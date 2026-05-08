@@ -1,5 +1,20 @@
 # TRC TPU allocation -- authoritative record
 
+## 2026-05-08 update
+
+Topology pivot: the **active canary is now single-host TPU v6e-8 in
+`europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
+`tinyaya-stage2-spot-v6e8-eu`, profile shorthand `v6e-8-eu` in
+`scripts/tpu/launch_spot.sh`). The v4-32 spot in `us-central2-b`
+ran iter 1-11 and is now SUSPENDED while v4 spot capacity is
+reclaimed. The TRC allocation table below has not changed -- but
+the **selected zone / tier for daily operation** has pivoted to
+v6e-8 spot in `europe-west4-a`. The allocation table, decision tree,
+and policy text below remain authoritative for the full quota grant;
+they are simply augmented by the choice to run on v6e-8 spot for
+the active canary. v6e-64 in `europe-west4-a` is the next scale-up
+target once spot capacity allows.
+
 **Status:** Active
 **Captured:** 2026-05-05
 **Recipient:** `mayankbhaskar007@gmail.com`

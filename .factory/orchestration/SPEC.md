@@ -1,7 +1,23 @@
 # TPU Canary Self-Healing Orchestrator -- SPEC
 
+## 2026-05-08 update banner
+
+The original SPEC below describes the v4-32 spot canary in
+`us-central2-b` (4 hosts, 4 Python processes). Since 2026-05-08 the
+active canary has pivoted to **single-host TPU v6e-8 spot in
+`europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, ONE Python
+process driving 8 chips via SPMD). All references to "4 worker
+PIDs", multi-host wandb shared-mode rendezvous, and the
+`gcloud ssh --worker=all` fan-out should be read with the topology
+qualifier: on v6e-8 the watchdog inspects ONE worker PID, ONE tmux
+session, ONE wandb run; on legacy v4-32 / future v6e-64 it inspects
+4 / 8 (one per host). The state machine, check-in cadence, and
+diagnosis table are topology-agnostic and remain the source of
+truth.
+
 **Version:** v2 (2026-05-06)
-**Status:** Approved
+**Status:** Approved (current canary is single-host v6e-8 EU since
+2026-05-08)
 **Branch:** `feat/tpu-support`
 **Implementation:** Option B (Skills + Custom Droids hybrid)
 
@@ -10,7 +26,8 @@
 ## 1. Goal
 
 Drive the v4-32 spot canary to a known-good first compile + decreasing
-loss with **bounded autonomous iteration**. Fix-and-redeploy on
+loss with **bounded autonomous iteration** (legacy; current canary is
+single-host v6e-8 EU since 2026-05-08). Fix-and-redeploy on
 classified errors without re-asking; pause for human only on
 (a) success, (b) check-in milestone, or (c) circuit-breaker trip.
 
@@ -174,6 +191,13 @@ flowchart TD
     HUMAN --> WAIT[Wait for explicit user decision]
 ```
 
+Topology note: the diagram retains the "4 PIDs unreachable" wording
+because it is the diagnostic regex value for the legacy v4-32
+multi-host case. On the current single-host v6e-8 EU canary there is
+ONE Python PID, so the equivalent is "1 PID unreachable 3+ polls"
+(or, equivalently, the single tmux session is gone). On future
+v6e-64 multi-host pods it would be 8 PIDs.
+
 ## 8. Diagnosis table (excerpt; full table in `playbook/diagnosis-table.md`)
 
 | # | Symptom | Patch | Tier |
@@ -183,7 +207,7 @@ flowchart TD
 | 3 | `AssertionError.*FakeTensor.*aten.index_select` | Drop `is_layer_pure=True` | T2 |
 | 5 | OOM / exit 137 | Halve batch_size or depth_chunk_size | T2 |
 | 6 | TPU duty=0 + HBM>50 + no step in 30 min | Kill + dump met.metrics_report() | T2 |
-| 7-9 | SSH refused / kernel panic / 4 PIDs dead | ESCALATE (no auto-recreate) | **T3** |
+| 7-9 | SSH refused / kernel panic / N PIDs dead (N=1 on v6e-8, 4 on legacy v4-32, 8 on v6e-64) | ESCALATE (no auto-recreate) | **T3** |
 | 10 | Same error twice | ESCALATE | T4 |
 
 ## 9. File patches (Phase 1.5)
@@ -210,7 +234,8 @@ YAML configs already done in prior commit (`use_scan_layers: false` everywhere).
 - [ ] 4 implementation files (2 skills, 2 droids) in natural locations
 - [ ] poller + checkin script in `_artifacts/`
 - [ ] 3 file patches applied
-- [ ] Hot redeploy succeeded; new PIDs confirmed on all 4 workers
+- [ ] Hot redeploy succeeded; new PID(s) confirmed on every worker
+  (1 worker on v6e-8 single-host, 4 on legacy v4-32, 8 on v6e-64)
 - [ ] Watchdog reports `verdict=success` for 2+ consecutive polls
 - [ ] wandb shows `step >= 1` AND >= 3 `loss=` lines AND loss decreasing
 - [ ] At least one checkpoint write attempted

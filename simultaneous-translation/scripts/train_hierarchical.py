@@ -51,6 +51,49 @@ import torch
 import yaml
 from torch.utils.data.distributed import DistributedSampler
 
+
+def _patch_attention_mask_for_bf16() -> None:
+    """Replace HF attention mask `torch.finfo(dtype).min` with safe -1e4.
+
+    pytorch/xla #4152: HF transformers builds attention masks using
+    `torch.finfo(fp32).min = -3.4e38`; when downcast to bf16 this becomes
+    `-inf`, then `(1 - mask) * -inf = NaN`. Replacing the constant with
+    -1e4 (well within bf16 representable range, still < softmax cutoff)
+    avoids the overflow without changing model semantics.
+
+    Idempotent. Must be called before any model loads.
+    """
+    try:
+        from transformers.modeling_attn_mask_utils import AttentionMaskConverter
+    except ImportError:
+        return
+
+    original_to_4d = AttentionMaskConverter.to_4d
+    original_make_causal = AttentionMaskConverter._make_causal_mask
+
+    SAFE_MIN = -1e4
+
+    def patched_to_4d(self, attention_mask_2d, query_length, dtype, key_value_length=None):
+        out = original_to_4d(self, attention_mask_2d, query_length, dtype, key_value_length)
+        return out.clamp(min=SAFE_MIN)
+
+    @staticmethod
+    def patched_make_causal(input_ids_shape, dtype, device, past_key_values_length=0, sliding_window=None):
+        out = original_make_causal(
+            input_ids_shape, dtype, device,
+            past_key_values_length=past_key_values_length,
+            sliding_window=sliding_window,
+        )
+        return out.clamp(min=SAFE_MIN)
+
+    AttentionMaskConverter.to_4d = patched_to_4d
+    AttentionMaskConverter._make_causal_mask = patched_make_causal
+    print("[bf16-mask-patch] AttentionMaskConverter patched (clamp >= -1e4)", flush=True)
+
+
+_patch_attention_mask_for_bf16()
+
+
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.backend import get_backend

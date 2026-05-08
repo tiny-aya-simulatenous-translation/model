@@ -230,18 +230,57 @@ def save_checkpoint_canonical_final(
             f"canonical_final: parameter {name} still on XLA after .to(cpu)"
         )
 
-    os.makedirs(save_dir, exist_ok=True)
+    is_gcs = save_dir.startswith("gs://") or save_dir.startswith("gs:/")
+    if is_gcs:
+        import tempfile
+        local_dir = tempfile.mkdtemp(prefix="canonical_final_")
+        if save_dir.startswith("gs:/") and not save_dir.startswith("gs://"):
+            gcs_dest = "gs://" + save_dir[len("gs:/"):]
+        else:
+            gcs_dest = save_dir
+        write_dir = local_dir
+        print(
+            f"[patch 19] save_dir is GCS ({gcs_dest}); staging to {local_dir}",
+            flush=True,
+        )
+    else:
+        write_dir = save_dir
 
-    peft_dir = os.path.join(save_dir, "peft_adapter")
+    os.makedirs(write_dir, exist_ok=True)
+
+    peft_dir = os.path.join(write_dir, "peft_adapter")
     model.backbone.model.save_pretrained(peft_dir, safe_serialization=False)
 
-    torch.save(model.projection.state_dict(), os.path.join(save_dir, "projection.pt"))
-    torch.save(model.depth_decoder.state_dict(), os.path.join(save_dir, "depth_decoder.pt"))
-    torch.save(model.backbone.text_embed.state_dict(), os.path.join(save_dir, "text_embed.pt"))
-    torch.save(model.backbone.audio_heads.state_dict(), os.path.join(save_dir, "audio_heads.pt"))
+    torch.save(model.projection.state_dict(), os.path.join(write_dir, "projection.pt"))
+    torch.save(model.depth_decoder.state_dict(), os.path.join(write_dir, "depth_decoder.pt"))
+    torch.save(model.backbone.text_embed.state_dict(), os.path.join(write_dir, "text_embed.pt"))
+    torch.save(model.backbone.audio_heads.state_dict(), os.path.join(write_dir, "audio_heads.pt"))
 
-    with open(os.path.join(save_dir, "metadata.json"), "w") as f:
+    with open(os.path.join(write_dir, "metadata.json"), "w") as f:
         json.dump({"step": "final", "save_kind": "canonical_final"}, f, indent=2)
+
+    if is_gcs:
+        import subprocess
+        print(
+            f"[patch 19] uploading {write_dir}/* to {gcs_dest}",
+            flush=True,
+        )
+        result = subprocess.run(
+            ["gsutil", "-m", "cp", "-r", write_dir + "/.", gcs_dest],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"[patch 19] gsutil stderr: {result.stderr}", flush=True)
+            raise RuntimeError(
+                f"gsutil upload failed (rc={result.returncode}): {result.stderr}"
+            )
+        print(
+            f"[patch 19] gsutil upload complete: {gcs_dest}",
+            flush=True,
+        )
+        import shutil
+        shutil.rmtree(write_dir, ignore_errors=True)
 
 
 def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:

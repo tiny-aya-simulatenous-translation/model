@@ -6,12 +6,38 @@
 
 ## Goal
 
-Validate the v4-32 spot canary at >= 200 successful steps with the
-patches landed during the iter 1-7 self-heal loop, then graduate to
-the 5000-step Phase 5 run on either v4-32 spot (continued) or v4-64
-on-demand once quota frees up.
+Validate the **single-host v6e-8 EU** spot canary at >= 200
+successful steps with the patches landed during the iter 1-13 self-
+heal loop (now extended with patches 20a/b for v6e-specific bf16
+NaN + GCS upload), then graduate to the 5000-step Phase 5 run on
+either v6e-8 EU (continued) or v6e-64 multi-host once spot capacity
+allows. The legacy v4-32 spot path in `us-central2-b` carried the
+canary through iter 1-11 (run `8pse8tzk` reached step 100 on v4-32);
+it is preserved as historical baseline only -- v4 spot capacity has
+been reclaimed.
 
-## Status snapshot (2026-05-06)
+## Status snapshot (2026-05-08)
+
+- **Topology pivot:** active canary is now single-host TPU v6e-8 spot
+  in `europe-west4-a` (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
+  `tinyaya-stage2-spot-v6e8-eu`). v4-32 spot in `us-central2-b` is
+  SUSPENDED (no spot capacity) and now treated as legacy.
+- Iter 13b on v6e-8 EU completed **20 steps + canonical
+  end-of-training save** in 23.3 min wall (run `zd42n7di`); patch 19
+  (`save_checkpoint_canonical_final` via `model.to("cpu")` ->
+  `save_pretrained`) validated, 2.4 GB checkpoint written.
+- Iter 14 in flight on v6e-8 EU: patch 20a (`gsutil cp -r` GCS upload
+  inside `save_checkpoint_canonical_final`) + patch 20b
+  (`AttentionMaskConverter` monkey-patch clamping mask values >=
+  -1e4, called at top of `train_hierarchical.py`) target the
+  remaining bf16 NaN (pytorch/xla #4152) + GCS-prefix-not-uploaded
+  bugs.
+- Single-host SPMD = ONE Python process drives all 8 chips; no
+  multi-host wandb shared-mode rendezvous, no host-index gating, no
+  GCS run-id polling. Exactly one tmux session, one PID, one wandb
+  run.
+
+## Status snapshot (2026-05-06, historical)
 
 - Iter 7 reached **step 100** with loss decreasing
   (9.0273 -> 7.5983) on TPU v4-32 spot @ us-central2-b.
@@ -185,6 +211,32 @@ deadlock. Locked-in artifacts in commit `ee01024`.
   patches 12-13 are unnecessary.
 - [ ] Update `.factory/memories.md` with iter 7 run-id, loss curve,
   and per-step timing as a milestone entry.
+- [x] (SUPERSEDED 2026-05-08) v4-32 spot quota was reclaimed; canary
+  pivoted to single-host v6e-8 in `europe-west4-a`. See Phase 10.
+
+### Phase 10 — Iter 14 validation on single-host v6e-8 EU
+
+Active 2026-05-08. Topology pivot: single host, 8 chips, ONE Python
+process, no cross-host coordination needed.
+
+- [x] Iter 13b -- 20-step run on v6e-8 EU + canonical save validated
+  (run `zd42n7di`, 23.3 min wall, 2.4 GB checkpoint). See
+  `memories.md` 2026-05-08 milestones.
+- [ ] Iter 14 -- patch 20a (`gsutil cp -r` upload to actual GCS
+  prefix inside `save_checkpoint_canonical_final`) lands and the
+  checkpoint reaches
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/`
+  (not the local `gs:/...` path bug).
+- [ ] Iter 14 -- patch 20b (`AttentionMaskConverter` monkey-patch
+  clamping HF `torch.finfo(fp32).min = -3.4e38` mask values to
+  >= -1e4) eliminates bf16 NaN at step 1 (pytorch/xla #4152). Run
+  with `precision: bfloat16`; confirm loss is finite.
+- [ ] Confirm iter 14 reaches `max_steps=20` (then 200) under
+  bf16 with non-NaN loss; record run id + loss curve in
+  `memories.md`.
+- [ ] Once iter 14 is green, decide between staying on v6e-8 spot
+  (single-host, 1.60 sec/step fp32) or graduating to v6e-64 multi-
+  host pod (8 hosts) for Phase 5 5000-step run.
 
 ## Out of scope
 

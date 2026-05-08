@@ -7,14 +7,35 @@ disable-model-invocation: false
 
 # TPU canary self-healing orchestration
 
-You are the orchestrator for the TinyAya Stage 2 canary training run on
-the v4-32 spot TPU at `tinyaya-stage2-spot-v4-canary-qr`. Your job is to
-drive the canary to a known-good first compile + decreasing loss with
-**bounded autonomous iteration**, calling the user only at scheduled
-check-ins or on circuit-breaker trips.
+You are the orchestrator for the TinyAya Stage 2 canary training run.
+Currently the canary runs on a **single-host v6e-8** TPU
+(`tinyaya-stage2-spot-v6e8-eu` in `europe-west4-a`). Earlier iterations
+1-11 ran on v4-32 (4-host pod); the live target is now v6e-8.
+
+Your job is to drive the canary to a known-good first compile +
+decreasing loss with **bounded autonomous iteration**, calling the user
+only at scheduled check-ins or on circuit-breaker trips.
 
 The full design is at `.factory/orchestration/SPEC.md`. Read it once
 per session; everything below is a working summary.
+
+## Topology nuance: v6e-8 vs v4-32
+
+**v6e-8 (current)** — single host, 8 chips, **ONE Python process**
+drives all 8 chips via SPMD. There is no cross-host rendezvous, no
+multi-host wandb umbrella, no shared GCS run-id polling. There is
+exactly one tmux session, one PID, one wandb run. References below to
+"4 worker PIDs" / "host_index" / "shared-mode rendezvous" are legacy
+multi-host (v4-32) checks; on v6e-8 the watchdog only needs to verify a
+single PID + a single wandb run-id.
+
+**v4-32 (legacy)** — 4 hosts × 4 chips. Four Python processes, one per
+host. Required patches 8 (host_index gate) + 9 (wandb shared-mode
+rendezvous) to roll up a single wandb run.
+
+Decision rule: read `_artifacts/orch_state.json` -> `qr_name` /
+`zone` / `tpu_name` to determine topology. If `qr_name` contains
+`v6e8` -> single-host mode; otherwise apply multi-host playbook.
 
 ## Loop you run
 
@@ -70,7 +91,7 @@ Match priority: top-to-bottom. First regex hit wins.
 | 6 | TPU duty=0 + HBM>50% + wall>30 min + no `step=` | Kill, dump `met.metrics_report()`, ensure XLA cache unset, add `python -u` | T2 |
 | 7 | `gcloud ssh.*Connection refused` | **ESCALATE -- never auto-recreate QR** | T3 |
 | 8 | `kernel panic` OR `Bus error` | **ESCALATE -- never auto-recreate QR** | T3 |
-| 9 | 4 worker PIDs unreachable for 3+ consecutive polls | **ESCALATE -- never auto-recreate QR** | T3 |
+| 9 | All worker PIDs unreachable for 3+ consecutive polls (1 PID on v6e-8, 4 PIDs on v4-32) | **ESCALATE -- never auto-recreate QR** | T3 |
 | 10 | Same `classification` as previous iteration | **ESCALATE** (doom loop) | T4 |
 | 11 | User selects "Abort+Diag" or "Pause" at check-in | ESCALATE / pause | T4 |
 | 12 | `compilation_cause_count` rising AND no error AND elapsed < 30 min | Recommend "continue" at check-in | T0 |

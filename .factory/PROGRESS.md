@@ -26,6 +26,270 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-08T05:30:09Z | feat/tpu-support@a7649a0 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T05:29:07Z | feat/tpu-support@a7649a0 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/orch_state.json`
+
+
+## 2026-05-08T05:28:35Z | feat/tpu-support@a7649a0 | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-08T05:28:34Z | feat/tpu-support@a7649a0 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T05:26:22Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
+
+
+## 2026-05-08T05:25:38Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/droids/tpu-watchdog.md`
+
+
+## 2026-05-08T05:25:33Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/droids/tpu-watchdog.md`
+
+
+## 2026-05-08T05:25:25Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/droids/tpu-watchdog.md`
+
+
+## 2026-05-08T05:25:08Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/droids/tpu-watchdog.md`
+
+
+## 2026-05-08T05:24:42Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/README.md`
+
+
+## 2026-05-08T05:24:12Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/README.md`
+
+
+## 2026-05-08T05:23:52Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-08T05:23:46Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-08T05:23:40Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-08T05:23:29Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-08T05:23:19Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-08T05:23:07Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-redeploy/SKILL.md`
+
+
+## 2026-05-08T05:22:43Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/SPEC.md`
+
+
+## 2026-05-08T05:22:38Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/SPEC.md`
+
+
+## 2026-05-08T05:22:31Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/SPEC.md`
+
+
+## 2026-05-08T05:22:17Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/orchestration/SPEC.md`
+
+
+## 2026-05-08T05:21:56Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/docs/tpu-launch-plan.md`
+
+
+## 2026-05-08T05:21:38Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/docs/tpu-changes.md`
+
+
+## 2026-05-08T05:21:26Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/docs/tpu-capacity-log.md`
+
+
+## 2026-05-08T05:21:13Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/docs/tpu-capacity-log.md`
+
+
+## 2026-05-08T05:21:02Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/docs/tpu-trc-allocation.md`
+
+
+## 2026-05-08T05:20:46Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/AGENTS.md`
+
+
+## 2026-05-08T05:20:29Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/AGENTS.md`
+
+
+## 2026-05-08T05:20:08Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-08T05:19:55Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-08T05:19:30Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-08T05:18:51Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/CONTRIBUTING.md`
+
+
+## 2026-05-08T05:18:33Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:18:04Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:17:51Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:17:33Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:17:21Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:16:59Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:16:50Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:16:36Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:16:23Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:16:16Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:16:08Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/README.md`
+
+
+## 2026-05-08T05:11:31Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-orchestrate/SKILL.md`
+
+
+## 2026-05-08T05:11:21Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/skills/tpu-orchestrate/SKILL.md`
+
+
+## 2026-05-08T05:08:27Z | feat/tpu-support@a7649a0 | info | session
+SessionEnd (other): 22 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-08T05:08:21Z | feat/tpu-support@a7649a0 | info | session
+PreCompact (auto): 22 unchecked PLAN items
+
+Top open items:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+- Decide between `fsdpv2_lora` and `fsdpv2` based on:
+- Document the decision in `memories.md` under "TPU strategy
+
+
+## 2026-05-08T05:08:14Z | feat/tpu-support@a7649a0 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T05:06:00Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/checkpointing.py`
+
+
+## 2026-05-08T04:43:36Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T04:39:14Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T04:39:06Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T04:38:54Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T04:38:20Z | feat/tpu-support@a7649a0 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/checkpointing.py`
+
+
+## 2026-05-08T04:33:34Z | feat/tpu-support@a7649a0 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
 ## 2026-05-08T04:32:37Z | feat/tpu-support@dccb7a1 | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
 

@@ -22,15 +22,21 @@ uv run python -m py_compile $(git ls-files '*.py')  # quick lint
 ## TPU launch (canonical commands)
 
 ```bash
-# create a queued v5litepod-16 in europe-west4-b
-bash scripts/tpu/launch_qr.sh canary
+# Current canary: v6e-8 spot in europe-west4-a (single-host, 8 chips,
+# ONE Python process, 32 GiB HBM/chip).
+TRC_PROFILE=v6e-8-eu \
+QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
+NODE_ID=tinyaya-stage2-spot-v6e8-eu \
+CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml \
+TPU_STRATEGY=fsdpv2_lora \
+  bash scripts/tpu/launch_spot.sh
 
 # hot-redeploy code without recreating the QR
 bash scripts/tpu/hot_redeploy.sh
 
 # probe sharding strategy on the live mesh
-gcloud compute tpus tpu-vm ssh tinyaya-stage2-canary \
-    --project=ml-pipelines-315702 --zone=europe-west4-b \
+gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu \
+    --project=ml-pipelines-315702 --zone=europe-west4-a \
     --worker=0 --command='cd /opt/tinyaya/simultaneous-translation && \
     sudo TPU_STRATEGY=fsdpv2_lora python3 scripts/tpu/probe_strategies.py --strategy=fsdpv2_lora'
 ```
@@ -69,7 +75,9 @@ torch_xla >= 2.6 and silently no-op. Use the explicit
 - `configs/stage2_tpu_canary.yaml` — short canary with reduced
   `max_frames` (currently 64; restore to 300 once compile is fast).
 
-## Per-chip memory budget (v5litepod-16, 16 GiB / chip)
+## Per-chip memory budget
+
+### v5litepod-16 (16 GiB / chip)
 
 ```
 Backbone (10.34 GB) + activations (5-10 GB) + grads + AdamW = OOM under replicated
@@ -80,6 +88,19 @@ Backbone (10.34 GB) + activations (5-10 GB) + grads + AdamW = OOM under replicat
 If `diagnose()` reports per-chip HBM > 12 GB, you're heading for OOM
 once activations + grads accumulate. Switch strategy or enable
 gradient checkpointing.
+
+### v6e-8 / v4-32 (32 GiB / chip)
+
+Both topologies share a 32 GiB HBM/chip budget, so the same per-chip
+totals apply to v4-32 (4 hosts x 4 chips = 16 chips) and v6e-8
+(1 host x 8 chips). The headroom relative to v5e is roughly 2x: for
+the canary `fsdpv2_lora` strategy, peak per-chip HBM in iter 7 (v4-32)
+and iter 13b (v6e-8 EU) sat under 12 GB out of the 32 GB budget. The
+budget that matters in practice is therefore activation memory
+(5-10 GB) + sharded params + grads + optim state, not HBM ceiling.
+On v6e-8 the lower chip count (8 vs 16) is offset by the absence of
+cross-host all-reduce, so steady-state sec/step is comparable at
+LoRA-only effective batch sizes.
 
 ## Conventions
 

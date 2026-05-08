@@ -50,15 +50,13 @@ train:
   # Combined with float32 precision, this bisects the v4 vs v6e gap.
   batch_size: 1
   grad_accum: 2
-  max_steps: 200
+  max_steps: 20
   warmup_steps: 50
   depth_chunk_size: 16
-  # NOTE iter 12: bf16 + LoRA + v6e produced NaN forward pass at
-  # step 1. v4-32 (iter 7) worked with bf16, but v6e has different
-  # bf16 numerics. Switching to float32 to confirm. If float32
-  # works, the long-term fix is to upcast a few critical layers
-  # (layernorm, softmax) while keeping rest in bf16.
-  precision: float32
+  # iter 14: bf16 with attention-mask monkey-patch (train_hierarchical.py
+  # _patch_attention_mask_for_bf16 clamps mask values >= -1e4 to avoid
+  # the pytorch/xla #4152 overflow). Falls back to fp32 if NaN reappears.
+  precision: bfloat16
 
   # Same disable as the v4 canary. v6e has 32 GiB/chip like v4, so
   # the activation budget is the same; canary should compile and
@@ -92,7 +90,7 @@ optim:
   lr_text_embed: 5.0e-4
 
 logging:
-  log_every: 10
+  log_every: 1
   # Patch 18a: save_every=0 disables the periodic save that deadlocks
   # all 4 hosts at futex_wait_queue inside PEFT.save_pretrained on
   # FSDPv2-XLA. The end-of-training canonical save (patch 19) is the

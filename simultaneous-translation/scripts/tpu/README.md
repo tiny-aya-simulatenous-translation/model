@@ -1,7 +1,19 @@
 # TPU launch scripts
 
-Operator-side scripts for training Stage 2 on Google Cloud TPU v4 via the
-Queued Resource API.
+Operator-side scripts for training Stage 2 on Google Cloud TPU TRC
+hardware via the Queued Resource API.
+
+## 2026-05-08 update
+
+The active canary topology is **single-host TPU v6e-8 spot in
+`europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
+`tinyaya-stage2-spot-v6e8-eu`, profile shorthand `v6e-8-eu`,
+config `configs/stage2_tpu_canary_v6e_spot.yaml`). On v6e-8 there
+is one host with 8 chips and ONE Python process driving them via
+SPMD. v4-32 spot in `us-central2-b` (4 hosts) is currently
+SUSPENDED and treated as a Legacy path (see "Legacy v4 examples"
+below). The runbook below has been updated to start with the v6e-8
+EU example.
 
 For the design rationale and decision history, see
 [`../../docs/tpu-launch-plan.md`](../../docs/tpu-launch-plan.md).
@@ -49,7 +61,7 @@ prefixing the command with `VAR=value bash ...`.
 `setup_gcp.sh`; from then on, VMs fetch them from Secret Manager at boot
 and the `.env` is no longer needed by the cloud side.
 
-## End-to-end runbook
+## End-to-end runbook (v6e-8 EU spot canary)
 
 From the repo root, on your local workstation:
 
@@ -71,35 +83,73 @@ gcloud auth application-default login
 # 3. seed GCP (bucket, secrets, IAM)
 bash simultaneous-translation/scripts/tpu/setup_gcp.sh
 
-# 4. CANARY first — 200 steps, separate QR + ckpt prefix
+# 4. CANARY: launch single-host v6e-8 spot in europe-west4-a
+#    (canonical command for the active topology)
+TRC_PROFILE=v6e-8-eu \
+QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
+NODE_ID=tinyaya-stage2-spot-v6e8-eu \
+CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml \
+TPU_STRATEGY=fsdpv2_lora \
+PROBE_FIRST=1 \
+  bash simultaneous-translation/scripts/tpu/launch_spot.sh
+
+# 5. observe canary
+QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
+NODE_ID=tinyaya-stage2-spot-v6e8-eu \
+ZONE=europe-west4-a \
+  bash simultaneous-translation/scripts/tpu/ops.sh status
+QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
+NODE_ID=tinyaya-stage2-spot-v6e8-eu \
+ZONE=europe-west4-a \
+  bash simultaneous-translation/scripts/tpu/ops.sh tail-logs
+
+# 6. canary teardown when validation is complete
+QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
+NODE_ID=tinyaya-stage2-spot-v6e8-eu \
+ZONE=europe-west4-a \
+  bash simultaneous-translation/scripts/tpu/ops.sh delete
+
+# 7-11: see "Legacy v4 examples" below for the historical
+# v4-32 / v4-64 full-run runbook (multi-host).
+```
+
+## Legacy v4 examples
+
+The historical runbook for the v4-32 / v4-64 path in `us-central2-b`
+is preserved here for reference. v4-32 spot is currently SUSPENDED
+(no spot capacity); v4-64 on-demand requires TRC quota that is not
+currently available.
+
+```bash
+# CANARY (legacy v4-32 / v4-64) — 200 steps, separate QR + ckpt prefix
 bash simultaneous-translation/scripts/tpu/launch_canary.sh
 
-# 5. observe canary (uses CANARY_QR_NAME / CANARY_NODE_ID from .env)
+# observe canary (uses CANARY_QR_NAME / CANARY_NODE_ID from .env)
 QR_NAME=$CANARY_QR_NAME NODE_ID=$CANARY_NODE_ID \
   bash simultaneous-translation/scripts/tpu/ops.sh status
 QR_NAME=$CANARY_QR_NAME NODE_ID=$CANARY_NODE_ID \
   bash simultaneous-translation/scripts/tpu/ops.sh tail-logs
 
-# 6. canary teardown when 200 steps complete
+# canary teardown when 200 steps complete
 QR_NAME=$CANARY_QR_NAME NODE_ID=$CANARY_NODE_ID \
   bash simultaneous-translation/scripts/tpu/ops.sh delete
 
-# 7. FULL run — 5,000 steps
+# FULL run (legacy) — 5,000 steps
 bash simultaneous-translation/scripts/tpu/launch_qr.sh
 
-# 8. observe full run
+# observe full run
 bash simultaneous-translation/scripts/tpu/ops.sh status
 bash simultaneous-translation/scripts/tpu/ops.sh tail-logs
 bash simultaneous-translation/scripts/tpu/ops.sh attach     # tmux on worker 0
 bash simultaneous-translation/scripts/tpu/ops.sh ssh 0      # plain ssh
 
-# 9. when training has converged
+# when training has converged
 bash simultaneous-translation/scripts/tpu/ops.sh pull-best ./_artifacts
 
-# 10. teardown (only when explicitly ready — bills GCE host costs until then)
+# teardown (only when explicitly ready — bills GCE host costs until then)
 bash simultaneous-translation/scripts/tpu/ops.sh delete
 
-# 11. commit & push (after the experiment is done)
+# commit & push (after the experiment is done)
 git add simultaneous-translation/pyproject.toml \
         simultaneous-translation/uv.lock \
         simultaneous-translation/configs/stage2_tpu.yaml \

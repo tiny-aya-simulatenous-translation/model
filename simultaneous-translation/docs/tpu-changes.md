@@ -1,8 +1,25 @@
 # TPU Support: Complete Guide to All Changes
 
+## 2026-05-08 update
+
+The launch-time and infrastructure narrative below was written when
+this branch first landed (Colab v5e-1, then v4-32 spot canary in
+`us-central2-b`). The active canary has since pivoted to **single-
+host TPU v6e-8 in `europe-west4-a`** (QR
+`tinyaya-stage2-spot-v6e8-eu-qr`, config
+`configs/stage2_tpu_canary_v6e_spot.yaml`). On v6e-8 there is exactly
+ONE Python process (single-host SPMD) driving all 8 chips, so the
+multi-host coordination patches (host-index gating, wandb shared-
+mode rendezvous, GCS run-id polling) are inert; they remain in the
+codebase to support v4-32 (legacy) and v6e-64 (future scale-up). All
+sections below referring to "4 hosts", multi-host wandb, or v4-32
+zones should be read as historical / multi-host topology context.
+
 **Branch:** `feat/tpu-support`
 **Base repo:** `tinyaya-stage2-scale/simultaneous-translation`
-**Verified on:** Colab TPU v5e-1 (forward + backward pass confirmed)
+**Verified on:** Colab TPU v5e-1 (forward + backward pass confirmed),
+v4-32 spot in `us-central2-b` (iter 7 reached step 100), v6e-8 spot
+in `europe-west4-a` (iter 13b reached step 20 + canonical save).
 
 ---
 

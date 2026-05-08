@@ -575,6 +575,42 @@ will only see two snapshots (input, output). For training with
 `output_hidden_states=False` this is fine; for inference / probing
 hooks we leave the proxy disabled.
 
+### 2026-05-08: Active canary topology pivots to single-host v6e-8 in europe-west4-a
+**Decision:** The active canary topology pivots from multi-host
+v4-32 spot in `us-central2-b` to **single-host v6e-8 spot in
+`europe-west4-a`**. The v6e-8 node is `tinyaya-stage2-spot-v6e8-eu`
+(QR `tinyaya-stage2-spot-v6e8-eu-qr`). Single-host means ONE Python
+process drives all 8 chips via SPMD: no cross-host rendezvous, no
+host-index gating, no GCS run-id polling, no wandb shared-mode
+umbrella. Exactly one tmux session, one PID, one wandb run. Patches
+8 (host-index gate) and 9 (wandb shared-mode rendezvous) remain in
+the codebase but are inert on this topology.
+**Reason:** v4 spot capacity in `us-central2-b` was reclaimed by
+other TRC users for multiple hours straight, leaving the v4-32
+QR SUSPENDED with no recovery. The single-host v6e-8 EU profile
+provisions in ~5 min and side-steps the multi-host coordination
+burden entirely. Per-chip HBM is 32 GiB on both v4-32 and v6e-8, so
+all batch-size and memory tuning carries over unchanged. v6e-64
+multi-host is the next scale-up target once spot capacity allows.
+**Where:** `tinyaya-stage2-spot-v6e8-eu` in `europe-west4-a`; QR
+`tinyaya-stage2-spot-v6e8-eu-qr`; config
+`simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`;
+checkpoint prefix
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/`;
+wandb run name `v6e-64-spot-canary` (kept verbatim from the YAML
+historical name).
+**Reproduce:** `TRC_PROFILE=v6e-8-eu
+QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr
+NODE_ID=tinyaya-stage2-spot-v6e8-eu
+CONFIG_FILE=configs/stage2_tpu_canary_v6e_spot.yaml
+TPU_STRATEGY=fsdpv2_lora bash scripts/tpu/launch_spot.sh`
+with patches 4-19 in `feat/tpu-support` HEAD; iter 14 also requires
+patch 20a (`gsutil cp -r` upload inside
+`save_checkpoint_canonical_final`) and patch 20b
+(`AttentionMaskConverter` monkey-patch clamping mask values >= -1e4
+to dodge pytorch/xla #4152 bf16 NaN, called at top of
+`scripts/train_hierarchical.py`).
+
 ---
 
 ## Hardware facts
