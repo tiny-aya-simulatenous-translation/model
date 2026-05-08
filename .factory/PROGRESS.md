@@ -26,6 +26,416 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-08T00:34:45Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 22 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-07T02:47:51Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 22 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-07T02:47:42Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-07T02:39:30Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-07T02:39:06Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v4_spot.yaml`
+
+
+## 2026-05-07T01:37:47Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-07T01:37:20Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/checkpointing.py`
+
+
+## 2026-05-06T21:00:30Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 22 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-06T20:59:56Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 22 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-06T20:59:56Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 22 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); first
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-06T20:00:00Z | feat/tpu-support@ee01024 | done | decide
+TPU canary v4-32 spot reached step 100 with decreasing loss (iter 7).
+First end-to-end Stage 2 success; all SPMD + observability + recompile
+fixes validated.
+
+Run: `https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/8pse8tzk`
+Loss: step 10 = 9.0273 -> step 100 = 7.5983 (decreasing).
+Steady-state: 3.41 sec/step from step 30 onwards.
+All 4 hosts attached to one wandb umbrella (shared-mode).
+
+Patches that landed (4-11):
+- p4: `optimizer_step` strategy-aware (FSDPv2 path: `optimizer.step()`
+  + `mark_step()`, replicated path: `xm.optimizer_step()`).
+- p5: `xm.mark_step()` before grad clip on TPU.
+- p6: skip `clip_grad_norm_` on TPU (FSDPv2 sharded grads + clip norm
+  forces a graph break per micro step).
+- p7: replace `.item()` with `.detach()` in TPU inner loop; XLA-tensor
+  accumulators (`micro_loss_sum_xla`); single materialize at
+  log_every. Eliminates the cpu_fallback storm that misdiagnosed iter
+  1/2 as "deadlock" (was actually 8 sequential 12-16 min compiles).
+- p8: cross-host `is_main_process` =
+  `xr.host_index()==0 AND xm.is_master_ordinal()`. Prevents 4 separate
+  wandb runs.
+- p9: wandb shared-mode rendezvous via GCS
+  (`gs://tinyaya-stage2-tpu/wandb-rendezvous/v4-32-spot-canary.id`).
+  Worker 0 publishes run_id, workers 1-3 attach via `gsutil cat` retry
+  loop (60 x 5s) using `mode=shared, x_primary, x_label=rank_N`.
+  Requires wandb >= 0.19.9 (TPU image ships 0.19.11).
+- p10: `grad_accum: 2 -> 8` -> hit HBM OOM at iter 4 (34.16G / 31.75G
+  by 2.41G).
+- p10b: `grad_accum: 8 -> 4` -> hit HBM OOM at iter 5 (over by 41 MB,
+  tantalizingly close; static memory dominated, not activations).
+- p10c: `grad_accum: 4 -> 2` (revert to iter 3 wiring with patch 7
+  fix) -> iter 6 reached step 2 but hit per-batch recompile.
+- p11: `collator pad_to=cfg.data.max_frames` (300) on TPU eliminates
+  per-batch shape variation. Canonical fix per pytorch/xla
+  recompilation guide. Iter 7 reached step 100, sec/step settled to
+  3.41 after the warm-up window.
+- p12 + p13 (drafted but not yet validated): skip
+  `generate_audio_sample` and `run_validation` on TPU during canary;
+  they re-trigger XLA recompiles by feeding non-canonical shapes
+  through the model.
+
+Iteration timeline (wall-clock minutes-from-deploy):
+| Iter | Patches | Outcome | Notes |
+|------|---------|---------|-------|
+| 1 | (initial) | Misdiagnosed "deadlock" at T+71 | actually compile of `.item()` cpu_fallback storm |
+| 2 | FSDPv2 (4,5,6) | Same symptom | confirmed `.item()` was forcing 12-16 min compile each |
+| 3 | + 7 (.item() removal) | Compile completed | 4 separate wandb runs (1 per host) |
+| 4 | + 8/9/10 (cross-host + shared wandb + grad_accum=8) | OOM at T+76 | 34.16G / 31.75G by 2.41G; fused HLO too large |
+| 5 | grad_accum=4 | OOM by 41 MB | static memory dominated; activations not the bottleneck |
+| 6 | grad_accum=2 | Step 2 reached | per-batch shape recompiles burned cycles |
+| 7 | + 11 (fixed-shape padding to max_frames=300) | **STEP 100, loss decreasing** | sec/step 3.41 steady-state |
+| 8 | + 12/13 (skip audio val + run_validation on TPU) | drafted | reduces per-step recompile risk |
+
+Stack diagnostics validated (py-spy 0.4.2 + /proc/PID/stack):
+- Real Python PID is the python3 process (not the `uv run` parent;
+  `uv run` sleeps).
+- Native stack `xla::PjRtCApiClient::CompileAndLoad ->
+  InitializeArgsAndCompile -> libtpu.so` = healthy compile, not stall.
+- Native stack containing `cpu_fallback / _local_scalar_dense /
+  at::native::item` = anti-pattern; redirect to patch 7.
+
+Cross-host SPMD lessons:
+- `xr.host_index()` returns 0..N-1 across hosts; `xm.is_master_ordinal
+  ()` is local-to-host. Only `host_index==0 AND
+  is_master_ordinal()` is the global rank-0.
+- wandb shared-mode requires >=0.19.9 (`mode=shared`, `x_primary=True`
+  on rank-0, `x_label=rank_N` on others). GCS rendezvous is a
+  dependency-free way to share the run_id.
+
+Self-healing orchestrator (Phase 1 commit ee01024) exit metrics:
+- Iterations consumed: 8 (5 hot-redeploys without QR re-create).
+- Wall-clock total: ~6 hours.
+- QRs created: 1 (preserved across iter 1-8).
+- Tier-3 escalations: 0.
+- User check-ins: 5 (T+15/30/45/60/T+71-deadlock-misdiag, T+63-iter4).
+
+
+## 2026-05-06T19:39:49Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T19:33:04Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T18:49:29Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T16:22:26Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T16:04:15Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T16:03:33Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T15:59:59Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T15:59:13Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T15:59:13Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T15:41:40Z | feat/tpu-support@ee01024 | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- `scan_layers` enabled around backbone + depth-decoder transformer
+- Explicit gradient checkpointing enabled; per-chip HBM usage
+- `canary` config restored to `max_frames=300`,
+- `fsdpv2_lora` strategy runs **at least 50 successful training
+- All commands in `VERIFY.md` pass.
+- First successful checkpoint written to GCS and W&B run logged.
+- 5000-step run completes; final loss + ASR-BLEU recorded in
+- Re-run probe with the real model on `tiny_canary` config; confirm
+
+
+## 2026-05-06T12:38:48Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T12:17:35Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T12:17:16Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/data/collator.py`
+
+
+## 2026-05-06T12:17:10Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/data/collator.py`
+
+
+## 2026-05-06T12:17:00Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/data/collator.py`
+
+
+## 2026-05-06T10:47:56Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v4_spot.yaml`
+
+
+## 2026-05-06T10:07:00Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v4_spot.yaml`
+
+
+## 2026-05-06T09:13:07Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T08:48:14Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T08:41:19Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v4_spot.yaml`
+
+
+## 2026-05-06T08:41:03Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T08:40:30Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/backend/tpu_backend.py`
+
+
+## 2026-05-06T08:30:03Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T08:24:02Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T08:18:40Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T08:15:12Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T08:14:01Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T08:13:53Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T08:13:39Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T08:13:30Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T08:13:22Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T07:50:40Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T07:41:01Z | feat/tpu-support@ee01024 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-06T07:25:58Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-06T07:24:46Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/backend/tpu_backend.py`
+
+
+## 2026-05-06T05:12:20Z | feat/tpu-support@ee01024 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/orch_poll.py`
+
+
 ## 2026-05-06T05:03:19Z | feat/tpu-support@59a8a75 | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/tpu/_remote_redeploy.sh`
 

@@ -55,8 +55,19 @@ gcloud compute tpus tpu-vm scp \
     --project="$PROJECT_ID" --zone="$ZONE" --worker=all
 
 echo "==> [4/5] running remote helper (NODE_ID=$NODE_ID strategy=$TPU_STRATEGY probe_only=$RUN_PROBE_ONLY)"
+# wandb shared-mode rendezvous: every hot redeploy gets a UNIQUE GCS path
+# so worker hosts cannot read a stale run-id left over from a prior
+# iteration. Without this suffix, primary writes the new run-id via
+# `gsutil cp` AFTER its `wandb.init` returns, but worker hosts begin
+# polling the file BEFORE that completes -- they read the previous
+# iter's stale run-id and attach to a dead run, while primary attaches
+# to the fresh run. Result: 1-of-4 hosts on the new run; 3-of-4 silently
+# routed to a zombie. Per-launch suffix kills the race entirely.
+LAUNCH_EPOCH="$(date +%s)"
+WANDB_RENDEZVOUS_URI="gs://${BUCKET}/wandb-rendezvous/v4-32-spot-canary-${LAUNCH_EPOCH}.id"
+echo "==> wandb rendezvous (this launch): $WANDB_RENDEZVOUS_URI"
 # Pass config via env vars in the SSH command (small string, no quoting issue).
-ENV_PREFIX="export GCS_URI='$GCS_URI' REPO_DIR='$REPO_DIR' TPU_STRATEGY='$TPU_STRATEGY' CONFIG_FILE='$CONFIG_FILE' RUN_PROBE_ONLY='$RUN_PROBE_ONLY';"
+ENV_PREFIX="export GCS_URI='$GCS_URI' REPO_DIR='$REPO_DIR' TPU_STRATEGY='$TPU_STRATEGY' CONFIG_FILE='$CONFIG_FILE' RUN_PROBE_ONLY='$RUN_PROBE_ONLY' WANDB_RENDEZVOUS_URI='$WANDB_RENDEZVOUS_URI';"
 gcloud compute tpus tpu-vm ssh "$NODE_ID" \
     --project="$PROJECT_ID" --zone="$ZONE" \
     --worker=all \

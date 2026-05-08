@@ -54,7 +54,15 @@ data:
 train:
   num_codebooks: 8
   batch_size: 2          # was 1 on v5e canary; v4 has 32 GiB/chip
-  grad_accum: 2
+  grad_accum: 2          # iter4 (=8) OOM'd by 2.41G; iter5 (=4) OOM'd by
+                         # 41MB - tantalizingly close. Static memory
+                         # (params/grads/optim_state for 274M trainable +
+                         # FSDPv2-wrapped 5.17B params) dominates, not
+                         # activations. Reverting to known-good size:
+                         # 2 * 2 * 16 = 64 effective batch (same as iter
+                         # 3 wiring that completed compile cleanly). The
+                         # .item() fix from patch 7 is in place so we
+                         # won't repeat the cpu_fallback storm.
   max_steps: 200         # canary: prove the wiring, not the model
   warmup_steps: 50
   depth_chunk_size: 16
@@ -88,7 +96,16 @@ optim:
 # audio sample and runs at least one validation pass before exit.
 logging:
   log_every: 10
-  save_every: 100        # was 50 on v5e canary; spot needs ckpts
+  # patch 18 (canary only): set save_every=0 to bypass checkpoint
+  # writes. Iter 9+10 reached step 100 cleanly with loss matching
+  # iter 7 baseline (7.5983) but save_checkpoint() deadlocks all 4
+  # hosts at futex_wait_queue -- root-causing the SPMD interaction
+  # with PEFT.save_pretrained / safetensors is a follow-on task. For
+  # the canary "training to step 200 with decreasing loss" goal, we
+  # don't strictly need a checkpoint -- validate the loop end-to-end
+  # first, then add back saves once the deadlock is fixed (likely
+  # via xm.save with explicit gather, or safe_serialization=False).
+  save_every: 0          # was 100; bypassed for canary loop validation
   audio_every: 100
   val_every: 100
   save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-spot-canary

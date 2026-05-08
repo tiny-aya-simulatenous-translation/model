@@ -33,25 +33,115 @@ from pathlib import Path
 import torch
 
 
+def _is_xla_tensor(t) -> bool:
+    if t is None:
+        return False
+    dev = getattr(t, "device", None)
+    return dev is not None and getattr(dev, "type", None) == "xla"
+
+
+def _to_cpu_state_dict(module: torch.nn.Module) -> dict:
+    return {
+        k: v.detach().to("cpu").contiguous() if torch.is_tensor(v) else v
+        for k, v in module.state_dict().items()
+    }
+
+
+def _detach_to_cpu(obj):
+    if torch.is_tensor(obj):
+        return obj.detach().to("cpu").contiguous()
+    if isinstance(obj, dict):
+        return {k: _detach_to_cpu(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_detach_to_cpu(v) for v in obj]
+    if isinstance(obj, tuple):
+        return tuple(_detach_to_cpu(v) for v in obj)
+    return obj
+
+
 def save_checkpoint(
-    model, optimizer, scheduler, step: int, save_dir: str, extra_state: dict | None = None
+    model,
+    optimizer,
+    scheduler,
+    step: int,
+    save_dir: str,
+    extra_state: dict | None = None,
+    *,
+    is_main: bool = True,
 ):
+    """Save a multi-component checkpoint, multi-host SPMD-safe.
+
+    On a multi-host TPU pod, the implicit SPMD gather triggered by
+    ``tensor.cpu()`` is a *cross-host collective*. Every host's Python
+    process must reach that .cpu() at the same time, otherwise host 0's
+    materialization deadlocks waiting for hosts 1..N to contribute their
+    chip-local shards. Patch 14 (mark_step + .cpu()) was correct in
+    spirit but wrong in placement: the entire body sat behind an
+    ``if is_main:`` gate at the call site, so only host 0 ever entered.
+    Hosts 1..3 sat at the downstream ``backend.barrier()`` and the
+    gather hung forever. (Confirmed empirically: iter 9 reached step
+    100, then save_checkpoint hung 4+ min with only the stale iter 7
+    README.md file present.)
+
+    The fix (patch 16): split the function into two phases and have ALL
+    hosts call it. Phase 1 materializes every state dict to CPU --
+    this is the collective and must run on every host. Phase 2 writes
+    files -- this runs only on the global primary. Hosts 1..3 return
+    after phase 1 and proceed to ``backend.barrier()`` while host 0
+    serializes to disk. Pattern mirrors HF transformers PR #27799
+    ``_save_tpu`` and issue #36004's recursive_unwrap recipe.
+    """
+    is_xla = _is_xla_tensor(next(model.parameters(), None))
+
+    if is_xla:
+        import torch_xla.core.xla_model as xm
+
+        xm.mark_step()
+        xm.wait_device_ops()
+
+    if is_xla:
+        peft_state = _to_cpu_state_dict(model.backbone.model)
+        proj_state = _to_cpu_state_dict(model.projection)
+        depth_state = _to_cpu_state_dict(model.depth_decoder)
+        text_state = _to_cpu_state_dict(model.backbone.text_embed)
+        audio_state = _to_cpu_state_dict(model.backbone.audio_heads)
+        optim_state = _detach_to_cpu(optimizer.state_dict())
+        sched_state = (
+            _detach_to_cpu(scheduler.state_dict())
+            if scheduler is not None and hasattr(scheduler, "state_dict")
+            else None
+        )
+    else:
+        peft_state = None  # let save_pretrained build it itself on GPU/CPU
+        proj_state = model.projection.state_dict()
+        depth_state = model.depth_decoder.state_dict()
+        text_state = model.backbone.text_embed.state_dict()
+        audio_state = model.backbone.audio_heads.state_dict()
+        optim_state = optimizer.state_dict()
+        sched_state = (
+            scheduler.state_dict()
+            if scheduler is not None and hasattr(scheduler, "state_dict")
+            else None
+        )
+
+    if not is_main:
+        return
+
     os.makedirs(save_dir, exist_ok=True)
 
     peft_dir = os.path.join(save_dir, "peft_adapter")
-    model.backbone.model.save_pretrained(peft_dir)
+    if peft_state is not None:
+        model.backbone.model.save_pretrained(peft_dir, state_dict=peft_state)
+    else:
+        model.backbone.model.save_pretrained(peft_dir)
 
-    torch.save(model.projection.state_dict(), os.path.join(save_dir, "projection.pt"))
-    torch.save(model.depth_decoder.state_dict(), os.path.join(save_dir, "depth_decoder.pt"))
-
-    # Text head is part of backbone.model (lm_head in PEFT), already in peft save.
-    # Separate text_embed is part of backbone state dict.
-    torch.save(model.backbone.text_embed.state_dict(), os.path.join(save_dir, "text_embed.pt"))
-    torch.save(model.backbone.audio_heads.state_dict(), os.path.join(save_dir, "audio_heads.pt"))
-
-    torch.save(optimizer.state_dict(), os.path.join(save_dir, "optimizer.pt"))
-    if scheduler is not None and hasattr(scheduler, "state_dict"):
-        torch.save(scheduler.state_dict(), os.path.join(save_dir, "scheduler.pt"))
+    torch.save(proj_state, os.path.join(save_dir, "projection.pt"))
+    torch.save(depth_state, os.path.join(save_dir, "depth_decoder.pt"))
+    torch.save(text_state, os.path.join(save_dir, "text_embed.pt"))
+    torch.save(audio_state, os.path.join(save_dir, "audio_heads.pt"))
+    torch.save(optim_state, os.path.join(save_dir, "optimizer.pt"))
+    if sched_state is not None:
+        torch.save(sched_state, os.path.join(save_dir, "scheduler.pt"))
 
     meta = {"step": step}
     if extra_state:

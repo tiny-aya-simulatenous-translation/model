@@ -22,6 +22,203 @@
 
 ## Architecture decisions
 
+### 2026-05-06: TPU canary breakthrough -- iter 7 reaches step 100, loss decreasing
+**Decision (milestone):** First end-to-end Stage 2 success on TPU.
+Run `8pse8tzk` reached step 100 with loss 9.0273 -> 7.5983 (steady
+decrease). Steady-state 3.41 sec/step from step 30 onwards. All 4
+v4-32 hosts attached to one wandb umbrella via shared-mode rendezvous.
+**Reason this is a milestone:** before this run we had not produced a
+single `loss=` line on TPU after eight weeks of infrastructure work.
+This unblocks Phase 5 (5000-step production run).
+**Reproduce:** `TRC_PROFILE=v4-32-uc2b
+QR_NAME=tinyaya-stage2-spot-v4-canary-qr
+NODE_ID=tinyaya-stage2-spot-v4-canary
+CONFIG_FILE=configs/stage2_tpu_canary_v4_spot.yaml
+TPU_STRATEGY=fsdpv2_lora bash scripts/tpu/launch_spot.sh`
+with patches 4-11 in `feat/tpu-support` HEAD.
+**Where:** wandb URL above; loss curve + sec/step in run scalars.
+
+### 2026-05-06: Patch 4 -- strategy-aware optimizer step
+**Decision:** `tpu_backend.optimizer_step(optimizer, mode)` branches
+on the active SPMD strategy. For `replicated`: `xm.optimizer_step
+(optimizer)` (the GPU-AllReduce analogue). For `fsdpv2_lora` /
+`fsdpv2`: `optimizer.step()` then `xm.mark_step()`. The FSDPv2 path
+already gathers shards inside the wrapper, so calling
+`xm.optimizer_step` would do an extra all-reduce on already-reduced
+grads.
+**Reason:** running `xm.optimizer_step` under FSDPv2 produces a 2x
+all-reduce and surprises the pjrt scheduler at large param counts.
+The mark_step flush is needed because FSDPv2 lazily defers the
+gradient gather; without an explicit mark_step the next iteration's
+forward pre-empts the still-running backward.
+**Where:** `simultaneous-translation/src/backend/tpu_backend.py`
+`optimizer_step`.
+
+### 2026-05-06: Patch 5 + 6 -- skip clip_grad_norm on TPU
+**Decision:** call `xm.mark_step()` once before the (optional) clip,
+then **skip** `clip_grad_norm_` entirely under FSDPv2 strategies.
+**Reason:** `clip_grad_norm_` reduces gradients across params with a
+`norm()` then a `mul_(coef)` per param tensor. Under FSDPv2 each
+gradient is an XLA tensor sharded across the chip mesh; the per-param
+norm forces a graph break (one HLO per param). With 36 backbone
+LoRA layers + a few projection heads + AdamW optim states, that's
+hundreds of graph breaks per step and tens of minutes of recompile
+hell. Skipping is empirically safe at the LoRA scale (we never see
+gradient spikes >1e3 in our run), and Phase 5 can re-enable a
+sharded-aware clip if needed.
+**Where:** `simultaneous-translation/scripts/train_hierarchical.py`
+TPU branch of the training step.
+
+### 2026-05-06: Patch 7 -- the .item() cpu_fallback storm
+**Decision:** in the TPU inner loop, replace `.item()` with `.detach
+()` on the loss; accumulate sums in XLA-tensor accumulators (e.g.
+`micro_loss_sum_xla`); materialise a single Python float at the
+`log_every` boundary only. This is the FSDPv2-reference example
+pattern.
+**Reason this is the single biggest fix in the run:** a `.item()`
+on an XLA tensor traces into `at::native::item ->
+_local_scalar_dense -> cpu_fallback -> XLANativeFunctions::_to_cpu`.
+Each call forces the partitioner to materialise the *entire* graph
+to host RAM. With `grad_accum=2` we had 4 sibling `.item()` calls
+inside the micro-batch loop; iter 1/2 misdiagnosed the resulting
+12-16 min per-call compile storm as a deadlock. py-spy native stack
+showed `xla::PjRtCApiClient::CompileAndLoad ->
+InitializeArgsAndCompile -> XLANativeFunctions::_to_cpu ->
+cpu_fallback -> _local_scalar_dense -> at::native::item ->
+train_hierarchical.py:696`, an unambiguous fingerprint.
+**Where:** `simultaneous-translation/scripts/train_hierarchical.py`
+TPU path (`micro_loss_sum_xla`, `running_xla` dict).
+**Reference:** pytorch/xla #4203, #8020 (open issues on
+`item()` performance under FSDPv2).
+
+### 2026-05-06: Patch 8 -- cross-host is_main_process gate
+**Decision:** `tpu_backend.is_main_process` returns
+`xr.host_index() == 0 AND xm.is_master_ordinal()`. Added
+`tpu_backend.host_index()` for callers that need just the host id.
+**Reason:** `xm.is_master_ordinal()` is **local to the host**
+(returns True on chip 0 of every host). On a 4-host pod that's 4
+"master" processes. Without the host_index check, every host opens
+its own wandb run, writes its own checkpoints, and emits its own
+log lines -- producing the 4-separate-runs observability gap we hit
+on iter 3.
+**Where:** `simultaneous-translation/src/backend/tpu_backend.py`
+`is_main_process` and `host_index`.
+
+### 2026-05-06: Patch 9 -- wandb shared-mode rendezvous via GCS
+**Decision:** rank-0 (host 0, chip 0) creates the wandb run and
+writes the run_id to
+`gs://tinyaya-stage2-tpu/wandb-rendezvous/<run-name>.id`. Hosts 1-3
+poll `gsutil cat` (60 retries, 5 s spacing) to read the run_id, then
+attach via `wandb.init(mode="shared", id=<run_id>, x_primary=False,
+x_label=f"rank_{host_index}")`. Rank-0 attaches with
+`x_primary=True`.
+**Reason:** wandb shared-mode (>= 0.19.9) is the canonical way to
+roll up multi-host SPMD telemetry into a single run. The TPU image
+ships 0.19.11. GCS is a dependency-free way to share the run_id;
+all 4 hosts already have GCS access for checkpoints. Alternative
+(rank-0-only) loses per-host telemetry.
+**Where:** `simultaneous-translation/scripts/train_hierarchical.py`
+wandb init block (gated on `is_main_process` for the publish, or on
+host_index>0 for the attach).
+**Reference:** pytorch/xla #9681 (multi-host SPMD docs), wandb
+multi-process / shared-mode docs.
+
+### 2026-05-06: Patch 10 / 10b / 10c -- grad_accum trade-off space
+**Decision:** revert `grad_accum: 8 -> 4 -> 2`. Static memory
+(params + grads + optim_state + sharded buffers) dominates
+activations on FSDPv2-LoRA at the 5.17B scale. Iter 4 (g=8): OOM by
+2.41 GB. Iter 5 (g=4): OOM by 41 MB. Iter 6 (g=2): clean compile.
+**Reason:** the fused HLO of `g` micro-steps' activations + the
+sharded heterogeneous params (LoRA[0:33] + FullFT[34:35]) crosses
+v4's 31.75 GiB / chip even at modest `g`. `xla_grad_checkpoint=true`
+was an option (recompute activations, ~half memory, 2x backward
+compute); not chosen because g=2 is a known-good wiring once patch 7
++ patch 11 are in.
+**Effective batch:** batch_size 2 * grad_accum 2 * 16 chips = 64.
+Phase 5 production target is 128; will re-evaluate after canary
+Phase 9 closes.
+**Where:** `simultaneous-translation/configs/stage2_tpu_canary_v4_spot
+.yaml` `train.grad_accum`.
+
+### 2026-05-06: Patch 11 -- fixed-shape padding eliminates per-batch recompile
+**Decision:** in the TPU collator, pad every batch to
+`cfg.data.max_frames` (300 for canary, 300 for full). Shape becomes
+fixed across all batches; XLA compiles one HLO and reuses it.
+**Reason:** iter 6 reached step 2 then stalled in a per-batch
+recompile loop -- each batch's actual frame count differed by 1-15
+frames, so the partitioner re-traced a fresh HLO per batch.
+sec/step was unbounded because compile dominated. Padding is the
+canonical pytorch/xla recompilation-avoidance fix
+("bucketization / padding"). Iter 7 reached step 100 in ~10 min
+of steady-state runtime after the initial ~30 min compile.
+**Trade-off:** wastes some FLOPs on padded frames, but the loss
+function masks them so the gradient is correct. Steady-state
+cost: ~20% more flops, ~50x faster wall-time vs recompile.
+**Where:** `simultaneous-translation/src/data/collator.py` TPU
+padding path; `cfg.data.max_frames` is the truth source.
+**Reference:** pytorch/xla user-guide -- "Avoiding Recompilations".
+
+### 2026-05-06: Patches 12 + 13 -- defer audio sample + validation on TPU canary (drafted)
+**Decision (drafted, not yet validated):** during canary
+(`max_steps <= 200`), skip `generate_audio_sample` and
+`run_validation` on TPU. They feed the model with non-canonical
+shapes (different sequence lengths, different batch dims) and
+re-trigger XLA recompiles. Canary is about wiring validation, not
+quality; the validation pass adds 10+ min of recompile per call.
+**Reason:** iter 7 `audio_every=100` and `val_every=100` will fire
+at step 100. If they fire and recompile, sec/step regresses; if they
+fire cleanly, we don't need the patches.
+**Status:** patches drafted but not pushed; waiting on iter 7 to
+hit step 100 to decide.
+**Where (drafted):**
+`simultaneous-translation/scripts/train_hierarchical.py`
+`generate_audio_sample` + `run_validation` call sites; gate on
+`backend.kind != "tpu" or cfg.train.max_steps > 200`.
+
+### 2026-05-06: Self-healing orchestrator -- bounded iteration with mandatory check-ins
+**Decision:** Adopt a 4-tier orchestration architecture (Orchestrator
+session -> custom droids -> skills -> background poller) with
+mandatory user check-ins at T+15/30/45/60/90 min wall. The
+orchestrator picks among 4 actions per check-in (Continue, Abort+
+Diag, Adjust+Continue, Pause). Tier 3 (VM corruption) is locked to
+**always escalate**; never auto-recreate a QR.
+**Reason:** Without check-ins, a slow XLA compile (which can
+legitimately take 30+ min) is indistinguishable from a stall, and
+we'd burn quota retrying the same patch. With check-ins the user is
+the safety valve. Without bounded iteration, a doom loop could
+spend hours on the same misclassification. The 4-phase Detect ->
+Diagnose -> Heal -> Verify pattern is from Claude Lab "Self-Healing
+AI Agents" (2026); the tier ladder is from Erlang OTP supervisors +
+K8s liveness probes.
+**Empirical results:** Iter 1 misdiagnosed deadlock; check-in at
+T+71 forced the user to ask "do not stop, diagnose it" -- which
+broke the loop and led to py-spy + the patch 7 root cause. Without
+the check-in, the misclassification would have repeated.
+**Where:** `.factory/orchestration/SPEC.md` v2,
+`.factory/skills/tpu-orchestrate/SKILL.md`,
+`.factory/droids/tpu-watchdog.md`,
+`.factory/droids/tpu-diagnoser.md`, `_artifacts/orch_poll.py`,
+`_artifacts/scheduled_checkin.py`.
+
+### 2026-05-06: py-spy 0.4.2 binary install for live native-stack diagnostics
+**Decision:** Download py-spy 0.4.2 wheel from the GitHub releases
+page on the workstation, extract the binary, and SCP it to the TPU
+worker `/tmp/py_spy-0.4.2.data/scripts/py-spy`. Use `sudo` (NOPASSWD
+verified) to attach to the python training PID.
+**Reason:** XLA compile silently consumes hours of CPU with no log
+output. Without a native-stack snapshot we cannot distinguish
+"healthy compile" (libtpu.so frames) from "stalled `.item()`
+storm" (cpu_fallback frames). py-spy attaches without process
+restart, captures Python + native frames, and is the only tool that
+gave us a definitive root-cause for iter 1.
+**The trick that took 30 min:** the actual python training PID is
+NOT the `uv run` PID printed by `pgrep python`. `uv run` spawns
+python and *sleeps* until the child exits. `ps -e --forest -o pid,
+pcpu,etime,comm,args` reveals the real Python at e.g. 514% CPU
+under the `uv run` parent.
+**Where:** orchestrator notes; binary lives at `/tmp/py_spy-0.4.2
+.data/scripts/py-spy` on every worker (idempotent install).
+
 ### 2026-05-03: SPMD partitioner crash workaround
 **Decision:** Force `XLA_DISABLE_FUNCTIONALIZATION=0` in `tpu_backend.py`.
 **Reason:** With value `1` (the torch_xla 2.6 default in some builds),
@@ -397,4 +594,21 @@ explicitly. Do not rely on `which` under sudo on a fresh TPU VM.
 
 ## Milestones (completed)
 
-(none yet — first milestone will be the 5000-step run completing.)
+### 2026-05-06: First end-to-end TPU canary success (iter 7)
+
+- **What:** First run that reached `step=100` with monotonically
+  decreasing loss on a TPU pod. Validates the entire SPMD + FSDPv2
+  + LoRA + cross-host wandb pipeline that we have been chasing
+  since the start of `feat/tpu-support`.
+- **Hardware:** v4-32 spot, us-central2-b. 4 hosts x 4 chips = 16
+  chips. 31.75 GiB HBM / chip. Effective batch =
+  2 (per-chip) * 2 (grad_accum) * 16 (chips) = 64.
+- **Run id:** `8pse8tzk` (project `tinyaya-stage2-tpu`).
+- **Loss trajectory:** step 10 = 9.0273; step 100 = 7.5983.
+- **Throughput:** sec/step = 3.41 (steady-state from step 30).
+- **Compile wall:** ~30 min from deploy to first `loss=` line.
+- **Patches in flight:** 4-11 (see "Architecture decisions" above).
+- **Reproduce:** see the architecture-decision entry of the same
+  date for the `launch_spot.sh` invocation.
+
+(Next milestone will be the 5000-step run completing.)

@@ -15,6 +15,7 @@ REPO_DIR="${REPO_DIR:-/opt/tinyaya}"
 TPU_STRATEGY="${TPU_STRATEGY:-auto}"
 CONFIG_FILE="${CONFIG_FILE:-configs/stage2_tpu_canary.yaml}"
 RUN_PROBE_ONLY="${RUN_PROBE_ONLY:-0}"
+WANDB_RENDEZVOUS_URI="${WANDB_RENDEZVOUS_URI:-}"
 TARBALL_LOCAL="/tmp/tinyaya-repo-hot.tar.gz"
 
 echo "[remote] host=$(hostname) strategy=$TPU_STRATEGY probe_only=$RUN_PROBE_ONLY"
@@ -96,6 +97,7 @@ TPU_STRATEGY=$TPU_STRATEGY \
 LD_LIBRARY_PATH="$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}" \
 HF_TOKEN="$HF_TOKEN" \
 WANDB_API_KEY="$WANDB_API_KEY" \
+WANDB_RENDEZVOUS_URI="$WANDB_RENDEZVOUS_URI" \
 PYTHONUNBUFFERED=1 \
 "$UV_BIN" run python -u scripts/train_hierarchical.py \
     --config "$CONFIG_FILE" \

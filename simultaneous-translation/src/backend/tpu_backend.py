@@ -366,20 +366,34 @@ class TPUBackend(BackendBase):
     # ------------------------------------------------------------------
 
     def optimizer_step(self, optimizer: torch.optim.Optimizer) -> None:
-        """``xm.optimizer_step`` -- fences XLA + triggers SPMD reductions.
+        """Optimizer step. Behaviour depends on FSDPv2 vs replicated.
 
-        GPU analogue: ``optimizer.step()``.
+        Per pytorch/xla FSDPv2 docs:
+            "When stepping the optimizer, directly call optimizer.step and
+             DO NOT call xm.optimizer_step. The latter reduces the gradient
+             across ranks, which is not needed for FSDP (where the
+             parameters are already sharded)."
+            -- https://docs.pytorch.org/xla/master/perf/fsdp.html
 
-        Notes
-        -----
-        TPU note: ``xm.optimizer_step`` is *not* a drop-in
-        ``optimizer.step()``. It also issues an XLA execution barrier
-        that materialises any deferred ops. Without it the gradients
-        live in the lazy graph and the next forward will recompile.
+        Calling xm.optimizer_step on a model wrapped with FSDPv2 issues
+        a SECOND all-reduce on top of the FSDPv2 reduce-scatter, and the
+        heterogeneous parameter groups (LoRA + full_ft + projection +
+        depth + text_embed) cause the second collective to hang at a
+        futex barrier (PyTorch/XLA #3424, HF transformers #41881).
+
+        We therefore:
+        - For replicated strategy: keep xm.optimizer_step (need the
+          all-reduce + execution barrier).
+        - For fsdpv2 / fsdpv2_lora: call optimizer.step() then
+          xm.mark_step() to materialise.
         """
         import torch_xla.core.xla_model as xm
 
-        xm.optimizer_step(optimizer)
+        if self._strategy in ("fsdpv2", "fsdpv2_lora"):
+            optimizer.step()
+            xm.mark_step()
+        else:
+            xm.optimizer_step(optimizer)
 
     def backward(self, loss: torch.Tensor) -> None:
         """``loss.backward()``. SPMD inserts the gradient reductions
@@ -403,10 +417,34 @@ class TPUBackend(BackendBase):
         xm.rendezvous("barrier")
 
     def is_main_process(self) -> bool:
-        """``xm.is_master_ordinal()`` -- True on the master TPU ordinal."""
-        import torch_xla.core.xla_model as xm
+        """True only on the GLOBAL primary host (host 0 + master ordinal).
 
-        return xm.is_master_ordinal()
+        On a multi-host TPU pod (e.g. v4-32 with 4 hosts) every host
+        independently runs a Python process, and ``xm.is_master_ordinal``
+        returns True on each one. That breaks "rank-0-only" patterns
+        (wandb.init, file writes, console logs) -- you get N copies.
+
+        We gate on ``xr.host_index() == 0`` AND ``xm.is_master_ordinal()``
+        so the predicate is True on exactly one process across the
+        entire pod.
+        """
+        import torch_xla.core.xla_model as xm
+        import torch_xla.runtime as xr
+
+        try:
+            host_idx = xr.host_index()
+        except Exception:
+            host_idx = 0
+        return host_idx == 0 and xm.is_master_ordinal()
+
+    def host_index(self) -> int:
+        """0-based host index across the TPU pod (0 on a single-host VM)."""
+        import torch_xla.runtime as xr
+
+        try:
+            return xr.host_index()
+        except Exception:
+            return 0
 
     def world_size(self) -> int:
         """Number of TPU chips visible to this PJRT runtime."""

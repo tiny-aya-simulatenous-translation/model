@@ -24,13 +24,28 @@ class InterleavedCollator:
     Works for both Stage 1 (audio understanding) and Stage 2 (translation).
     """
 
-    def __init__(self, audio_pad_id: int = 0, text_pad_id: int = ZERO_PADDING):
+    def __init__(
+        self,
+        audio_pad_id: int = 0,
+        text_pad_id: int = ZERO_PADDING,
+        pad_to: int | None = None,
+    ):
         self.audio_pad_id = audio_pad_id
         self.text_pad_id = text_pad_id
+        self.pad_to = pad_to
 
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
         lengths = [item["num_frames"] for item in batch]
-        max_len = max(lengths)
+        # When pad_to is set, every batch is padded to the SAME length so the
+        # XLA tracer sees one input shape and compiles a single graph. With
+        # the default (max(lengths)) on a TPU you get one fresh compile per
+        # unique batch length -- pytorch/xla #4203 / #7622 / official
+        # "Troubleshooting recompilations" guide. Static shapes are the
+        # canonical fix per the XLA team (JackCaoG).
+        max_len = self.pad_to if self.pad_to is not None else max(lengths)
+        # Truncate any over-long sample (defensive; dataset already truncates)
+        if self.pad_to is not None:
+            lengths = [min(l, self.pad_to) for l in lengths]
         B = len(batch)
 
         # Get number of codebooks from first sample
@@ -39,14 +54,14 @@ class InterleavedCollator:
         # Pad audio codes: [B, CB, T_max]
         audio_codes = torch.full((B, num_codebooks, max_len), self.audio_pad_id, dtype=torch.long)
         for i, item in enumerate(batch):
-            T = item["audio_codes"].shape[1]
-            audio_codes[i, :, :T] = item["audio_codes"]
+            T = min(item["audio_codes"].shape[1], max_len)
+            audio_codes[i, :, :T] = item["audio_codes"][:, :T]
 
         # Pad text IDs: [B, T_max]
         text_ids = torch.full((B, max_len), self.text_pad_id, dtype=torch.long)
         for i, item in enumerate(batch):
-            T = item["text_ids"].shape[0]
-            text_ids[i, :T] = item["text_ids"]
+            T = min(item["text_ids"].shape[0], max_len)
+            text_ids[i, :T] = item["text_ids"][:T]
 
         # Attention mask: [B, T_max]
         attention_mask = torch.zeros(B, max_len, dtype=torch.long)
@@ -64,8 +79,8 @@ class InterleavedCollator:
         if "loss_mask" in batch[0]:
             loss_mask = torch.zeros(B, max_len, dtype=torch.long)
             for i, item in enumerate(batch):
-                T = item["loss_mask"].shape[0]
-                loss_mask[i, :T] = item["loss_mask"]
+                T = min(item["loss_mask"].shape[0], max_len)
+                loss_mask[i, :T] = item["loss_mask"][:T]
             result["loss_mask"] = loss_mask
 
         return result

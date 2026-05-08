@@ -106,3 +106,35 @@ python3 phase-3-data-generation-pipeline/cli.py --help > /dev/null \
 # probe fsdpv2 strategy on tiny model
 [ -n "$PJRT_DEVICE" ] && python3 simultaneous-translation/scripts/tpu/probe_strategies.py --strategy=fsdpv2 || echo "skipped (no TPU)"
 ```
+
+## Orchestration artifacts (workstation-side)
+
+> Validate the self-healing orchestrator scaffolding stays consistent.
+
+```bash
+# orchestrator spec + diagrams + playbook all parseable / non-empty
+test -s .factory/orchestration/SPEC.md
+test -s .factory/orchestration/README.md
+for d in .factory/orchestration/diagrams/*.mmd; do test -s "$d"; done
+for p in .factory/orchestration/playbook/*.md; do test -s "$p"; done
+```
+
+```bash
+# orchestrator droids + skills exist
+test -s .factory/droids/tpu-watchdog.md
+test -s .factory/droids/tpu-diagnoser.md
+test -s .factory/skills/tpu-orchestrate/SKILL.md
+test -s .factory/skills/tpu-redeploy/SKILL.md
+```
+
+```bash
+# poller + checkin helper compile
+python3 -m py_compile _artifacts/orch_poll.py
+python3 -m py_compile _artifacts/scheduled_checkin.py
+```
+
+```bash
+# orch_state.json is valid JSON if present
+test ! -e _artifacts/orch_state.json \
+  || python3 -c "import json; json.load(open('_artifacts/orch_state.json'))"
+```
