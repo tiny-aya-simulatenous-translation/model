@@ -62,9 +62,10 @@ been reclaimed.
   shared-mode + rank-0 publish to GCS rendezvous).
 - [x] >= 100 successful training steps with monotonically decreasing
   loss (9.0273 -> 7.5983 over steps 10 -> 100).
-- [ ] >= 200 successful steps (canary `max_steps=200`); first
-  checkpoint written to
-  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-spot-canary/`.
+- [ ] >= 200 successful steps (canary `max_steps=200`); checkpoint
+  written to
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/step_000200_final/`
+  (active in Phase 11 on v6e-8 EU; bf16 + patch 20a/b in flight).
 - [ ] Patches 12 + 13 either landed and verified, or proven
   unnecessary by iter 7+ profile.
 - [ ] All commands in `VERIFY.md` (monorepo + simultaneous-translation
@@ -214,7 +215,7 @@ deadlock. Locked-in artifacts in commit `ee01024`.
 - [x] (SUPERSEDED 2026-05-08) v4-32 spot quota was reclaimed; canary
   pivoted to single-host v6e-8 in `europe-west4-a`. See Phase 10.
 
-### Phase 10 — Iter 14 validation on single-host v6e-8 EU
+### Phase 10 — Iter 14 validation on single-host v6e-8 EU (COMPLETED)
 
 Active 2026-05-08. Topology pivot: single host, 8 chips, ONE Python
 process, no cross-host coordination needed.
@@ -222,21 +223,74 @@ process, no cross-host coordination needed.
 - [x] Iter 13b -- 20-step run on v6e-8 EU + canonical save validated
   (run `zd42n7di`, 23.3 min wall, 2.4 GB checkpoint). See
   `memories.md` 2026-05-08 milestones.
-- [ ] Iter 14 -- patch 20a (`gsutil cp -r` upload to actual GCS
-  prefix inside `save_checkpoint_canonical_final`) lands and the
-  checkpoint reaches
-  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/`
-  (not the local `gs:/...` path bug).
-- [ ] Iter 14 -- patch 20b (`AttentionMaskConverter` monkey-patch
+- [x] Iter 14 -- patch 20a (`gsutil cp -r` upload to actual GCS
+  prefix inside `save_checkpoint_canonical_final`) lands; the
+  checkpoint reached
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/step_000020_final/`
+  (2.36 GiB, all 5 components + peft_adapter/).
+- [x] Iter 14 -- patch 20b (`AttentionMaskConverter` monkey-patch
   clamping HF `torch.finfo(fp32).min = -3.4e38` mask values to
   >= -1e4) eliminates bf16 NaN at step 1 (pytorch/xla #4152). Run
-  with `precision: bfloat16`; confirm loss is finite.
-- [ ] Confirm iter 14 reaches `max_steps=20` (then 200) under
-  bf16 with non-NaN loss; record run id + loss curve in
-  `memories.md`.
-- [ ] Once iter 14 is green, decide between staying on v6e-8 spot
-  (single-host, 1.60 sec/step fp32) or graduating to v6e-64 multi-
-  host pod (8 hosts) for Phase 5 5000-step run.
+  `ovttp92v` with `precision: bfloat16` was finite throughout: loss
+  10.68 -> 8.59 over 20 steps in 18.6 min wall (1.76 sec/step).
+- [x] Decision: stay on v6e-8 spot for the canary (1.76 sec/step in
+  bf16 is competitive with v4-32's 3.41 sec/step in fp32) and reserve
+  v6e-64 multi-host for the eventual 5000-step Phase 5 run.
+
+### Phase 11 — 200-step bf16 canary on v6e-8 EU (DONE)
+
+Iter 17 closed the phase: batch=8, grad_accum=2, grad_checkpoint=true,
+bf16 + patch 20a/b. 200 steps in 31.8 min wall (compile=482s, then
+2.36 sec/step), loss 10.33 -> 6.96, no NaN, canonical save uploaded
+to GCS at `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-
+canary/step_000200_final/` (2.36 GiB, 5 components + metadata.json).
+Throughput **5.96x** iter 14 (54.2 vs 9.1 examples/sec).
+
+- [x] Bump `train.max_steps: 20 -> 200`.
+- [x] Iter 17 tarball deployed; wandb run `0v4uizbu`.
+- [x] step >= 200 with monotonic loss decrease.
+- [x] Patch-19 canonical save complete; GCS bucket lists all 5 files.
+- [x] Final GCS URL surfaced to user.
+- [x] Memory probe (`_artifacts/memory_probe.py`) confirmed real HBM
+  ceiling = 31.246 GiB/chip (not 32 GiB marketing); peak ~1.2 GiB
+  during 5x4096 matmul warmup; zero `aten::` fallbacks.
+
+### Phase 12 — Iter 18 throughput optimization (active)
+
+Goal: lift throughput ~1.7x over iter 17 baseline (~10x iter 14)
+by raising effective batch and instrumenting the run for live HBM
++ profiler telemetry. Lever 6 (clip_grad_norm re-enable) is
+DEFERRED to iter 19 to keep iter 18 baseline clean.
+
+- [ ] Lever 1 -- `batch_size: 8 -> 16` in
+  `configs/stage2_tpu_canary_v6e_spot.yaml` (KEEP
+  `xla_grad_checkpoint: true`).
+- [ ] Lever 2 -- `data.max_frames: 300 -> 400` in same config.
+- [ ] Lever 3 -- patch `tpu_backend.py:get_memory_info` to call
+  `xm.mark_step()` + `xm.wait_device_ops()` before
+  `xm.get_memory_info(device)` so SPMD lazy tensors materialise
+  before the host reads HBM.
+- [ ] Lever 4 -- `xp.start_server(9012)` at rank-0 startup;
+  `xp.StepTrace('train_step', step_num=step)` per step; auto-
+  capture 30s trace at step 30 -> `/tmp/xla_profile/iter18-<ts>/`;
+  launcher post-train hook gsutil-uploads to
+  `gs://tinyaya-stage2-tpu/profiles/`.
+- [ ] Lever 5 -- `export PT_XLA_DEBUG_LEVEL=1` in launcher
+  (compile-cause + recompile reasons; level 2 was rejected as too
+  noisy).
+- [ ] Lever 6 (deferred) -- in-code TODO comment block in
+  `train_hierarchical.py:macro-step` documenting the three
+  re-enable variants (6a fused / 6b clip_grad_value_ / 6c vanilla).
+- [ ] Build iter 18 tarball; upload to
+  `gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter18.tar.gz`.
+- [ ] Deploy + launch on `tinyaya-stage2-spot-v6e8-eu`.
+- [ ] Announce new wandb URL on first detection.
+- [ ] Validate first 30 steps: no OOM (HBM < 25 GB), real HBM in
+  diagnose log, sec/step ~< 4s.
+- [ ] Reach step 200 with monotonic loss decrease; canonical save
+  to `gs://.../step_000200_final/` succeeds (overwrites iter 17).
+- [ ] gsutil cp profile dir to GCS; verify TensorBoard-readable.
+- [ ] Commit iter 18 with all 5 levers + lever 6 TODO.
 
 ## Out of scope
 

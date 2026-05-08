@@ -26,6 +26,111 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-08T07:56:19Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:55:50Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:37:55Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:23:50Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
+
+
+## 2026-05-08T07:23:10Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/orch_state.json`
+
+
+## 2026-05-08T07:22:37Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-08T07:21:33Z | feat/tpu-support@3c629da | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T07:21:00Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:20:39Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:19:52Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:19:34Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:19:12Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T07:18:52Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/backend/tpu_backend.py`
+
+
+## 2026-05-08T07:18:37Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T07:18:24Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T06:46:58Z | feat/tpu-support@3c629da | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T06:39:12Z | feat/tpu-support@3c629da | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/memory_probe.py`
+
+
+## 2026-05-08T06:06:32Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T06:03:47Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T05:55:05Z | feat/tpu-support@3c629da | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-08T05:44:53Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_canary_v6e_spot.yaml`
+
+
+## 2026-05-08T05:44:47Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-08T05:44:33Z | feat/tpu-support@3c629da | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-08T05:42:45Z | feat/tpu-support@3c629da | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
 ## 2026-05-08T05:30:09Z | feat/tpu-support@a7649a0 | fail | verify
 verify: 11 passed, 1 failed out of 12 on Stop
 

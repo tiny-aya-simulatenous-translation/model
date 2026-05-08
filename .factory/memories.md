@@ -22,6 +22,92 @@
 
 ## Architecture decisions
 
+### 2026-05-08: Iter 18 -- five optimization levers + lever 6 variants documented
+**Decision (perf milestone):** Lift v6e-8 EU canary throughput ~1.7x over
+iter 17 (2.36 sec/step, 54.2 examples/sec, ~10x iter 14) while
+instrumenting the run for live HBM + profiler telemetry.
+**Levers applied** (iter 18):
+  * Lever 1: `batch_size: 8 -> 16` (KEEP `xla_grad_checkpoint: true`).
+    Effective batch 16 * 2 * 8 = 256 (2x iter 17). HBM est. ~13-15
+    GB/chip vs measured 31.246 GiB ceiling -> ~50% util.
+  * Lever 2: `max_frames: 300 -> 400`. Per-chip token batch 6400.
+  * Lever 3: `tpu_backend.py:get_memory_info` now calls
+    `xm.mark_step() + xm.wait_device_ops()` BEFORE
+    `xm.get_memory_info(device)`. Without sync the lazy graph hasn't
+    materialised on chip and HBM reads as 0 GB. Verified by
+    `_artifacts/memory_probe.py`.
+  * Lever 4: Profiler instrumentation. `xp.start_server(9012)` at
+    rank-0 startup; `xp.StepTrace('train_step', step_num=step)`
+    wraps every step body; auto-capture a 30s trace at step 30 ->
+    `/tmp/xla_profile/iter18-<ts>/`. Launcher post-train hook
+    `gsutil cp -r` to `gs://tinyaya-stage2-tpu/profiles/`.
+  * Lever 5: `export PT_XLA_DEBUG_LEVEL=1` in launcher. Iter 17 had
+    0 `aten::` fallbacks per `met.metrics_report()`; this acts as a
+    regression detector if iter 18 introduces any.
+**Lever 6 DEFERRED to iter 19+** (in-code TODO comment block in
+`train_hierarchical.py:macro-step` documents three re-enable
+variants below). The TPU branch keeps
+`grad_norm = torch.tensor(0.0)` for now to keep the iter 18 baseline
+free of confounders.
+**Reason for deferring lever 6:** even the safest fused variant
+costs 5-15% throughput from the global-norm reduction. We want to
+isolate the gain from levers 1-5 first, then A/B compare with-clip
+vs without-clip on identical config in iter 19.
+**Where:** branch `feat/tpu-support`; commit (pending iter 18
+validation), wandb run TBD, GCS checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/
+step_000200_final/` (overwrites iter 17 artifact on completion).
+
+### 2026-05-08: Lever 6 variants for re-enabling clip_grad_norm_ on FSDPv2 SPMD
+**Decision (deferred lever):** Three known-safe ways to re-enable
+gradient clipping on single-host v6e-8 SPMD; ranked by safety.
+**Why currently disabled:** patch 5/6 set
+`grad_norm = torch.tensor(0.0)` on the TPU branch. The original
+disable was driven by two distinct issues:
+  1. **Cross-host all-reduce deadlock** (HF #41881, pytorch/xla
+     #3424) with heterogeneous parameter groups. **Single-host v6e-8
+     invalidates this concern** (no inter-host all-reduce; SPMD
+     partitioner emits a single `xla::all_reduce` HLO op).
+  2. **Per-parameter graph-break storm** -- vanilla
+     `torch.nn.utils.clip_grad_norm_` does ~550 graph breaks per
+     step under FSDPv2 (`for p in params: norms.append(p.grad.norm())`
+     plus `if torch.isfinite(coef).item():` plus
+     `for p: p.grad.mul_(coef)`). The recompile cost is real.
+
+**Variant 6a (preferred for single-host v6e-8) -- fused single-graph
+clip:**
+```python
+total_sq = torch.zeros([], device=device)
+for g in (p.grad for p in model.parameters() if p.grad is not None):
+    total_sq = total_sq + (g.float() ** 2).sum()
+total_norm = total_sq.sqrt()
+clip_coef = max_norm / (total_norm + 1e-6)
+clip_coef = torch.where(clip_coef < 1.0, clip_coef, torch.ones_like(clip_coef))
+for p in model.parameters():
+    if p.grad is not None:
+        p.grad.mul_(clip_coef)
+xm.mark_step()
+```
+Properties: 1 fused HLO; no `.item()`; populates `train/grad_norm`
+metric; ~5-15% throughput cost from the global-norm reduction.
+
+**Variant 6b -- element-wise clip_grad_value_:**
+`torch.nn.utils.clip_grad_value_(model.parameters(), 1.0)`. Smallest
+graph (per-element clamp). Loses the norm metric. Use if the metric
+is unimportant and we want zero throughput cost.
+
+**Variant 6c -- vanilla clip_grad_norm_:**
+`torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm,
+error_if_nonfinite=False)`. NOT recommended on FSDPv2 SPMD --
+per-parameter graph break storm causes recompile cascade. Will work
+on single-host (no deadlock) but throughput collapses.
+
+**Recommendation:** apply variant 6a in iter 19 only after iter 18
+validates levers 1-5. A/B against iter 18 baseline on identical
+config to measure the throughput cost cleanly.
+**Where:** in-code TODO comment at `train_hierarchical.py:macro-step
+(if is_tpu)`; `.factory/PLAN.md` Phase 12.
+
 ### 2026-05-06: TPU canary breakthrough -- iter 7 reaches step 100, loss decreasing
 **Decision (milestone):** First end-to-end Stage 2 success on TPU.
 Run `8pse8tzk` reached step 100 with loss 9.0273 -> 7.5983 (steady

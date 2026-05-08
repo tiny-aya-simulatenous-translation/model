@@ -484,6 +484,21 @@ def main():
     device = backend.get_device()
     is_main = backend.is_main_process()
 
+    # iter 18 lever 4: start the XLA profiler server so external tools
+    # (capture_profile.py / TensorBoard) can attach. Rank-0 only --
+    # multi-host pods would collide on port 9012. Single-host v6e-8
+    # has one process so this is unconditional once is_main passes.
+    is_tpu_early = (cfg.get("backend", "auto") == "tpu")
+    if is_tpu_early and is_main:
+        try:
+            import torch_xla.debug.profiler as xp
+            xp_port = int(os.environ.get("XLA_PROFILER_PORT", "9012"))
+            xp.start_server(xp_port)
+            print(f"[profiler] xp.start_server listening on :{xp_port}",
+                  flush=True)
+        except Exception as e:
+            print(f"[profiler] xp.start_server failed: {e}", flush=True)
+
     torch.manual_seed(42 + int(os.environ.get("LOCAL_RANK", 0)))
 
     if is_main:
@@ -779,7 +794,62 @@ def main():
             "audio": torch.tensor(0.0, device=device),
         }
 
+    # iter 18 lever 4: auto-capture a 30s profiler trace at step 30.
+    # Spans steps ~30-43 at 2.36s/step -> covers compile-cache-warm
+    # steady state. Trace lands at /tmp/xla_profile/iter18-<ts>/ and
+    # the launcher post-train hook gsutil-uploads to GCS.
+    profile_logdir = None
+    profile_thread = None
+    if is_tpu and is_main:
+        ts = int(time.time())
+        profile_logdir = f"/tmp/xla_profile/iter18-{ts}"
+        try:
+            os.makedirs(profile_logdir, exist_ok=True)
+        except Exception as e:
+            print(f"[profiler] mkdir {profile_logdir} failed: {e}", flush=True)
+            profile_logdir = None
+
     while step < max_steps:
+        # iter 18 lever 4: kick off a background trace capture once we
+        # are past the first few compile cycles.
+        if (
+            is_tpu and is_main and step == 30
+            and profile_thread is None and profile_logdir is not None
+        ):
+            try:
+                import threading as _threading
+                import torch_xla.debug.profiler as xp
+
+                def _capture():
+                    try:
+                        xp.trace(
+                            f"localhost:{int(os.environ.get('XLA_PROFILER_PORT', '9012'))}",
+                            profile_logdir,
+                            duration_ms=30000,
+                        )
+                        print(f"[profiler] trace captured to {profile_logdir}",
+                              flush=True)
+                    except Exception as ex:
+                        print(f"[profiler] capture failed: {ex}", flush=True)
+
+                profile_thread = _threading.Thread(target=_capture, daemon=True)
+                profile_thread.start()
+                print(f"[profiler] trace capture started -> {profile_logdir}",
+                      flush=True)
+            except Exception as e:
+                print(f"[profiler] trace start failed: {e}", flush=True)
+
+        # iter 18 lever 4: per-step profiler scope removed.
+        # Both xp.StepTrace AND xp.Trace open an XLA "scope" that is
+        # asserted-empty by `_xla_step_marker` on every mark_step
+        # call. Our step body already issues 2-3 mark_steps (macro
+        # step + logging + diagnose), so any wrapping scope triggers
+        # `RuntimeError: Expecting scope to be empty but it is ...`.
+        # The auto-captured 30s trace at step 30 (via xp.trace into
+        # a logdir) still shows the full HLO timeline with mark_step
+        # events; we just lose the per-step text labels in TensorBoard.
+        _step_trace = None
+
         # grad accumulation micro-steps
         if is_tpu:
             micro_loss_sum_xla = torch.tensor(0.0, device=device)
@@ -857,6 +927,31 @@ def main():
         # entirely. We follow that pattern on TPU and surface the
         # grad_norm only on GPU/CPU. See HF transformers #41881 and
         # pytorch/xla #3424 for the underlying deadlock pattern.
+        #
+        # iter 18 (lever 6 -- DEFERRED to iter 19+):
+        # Single-host v6e-8 SPMD invalidates the cross-host deadlock
+        # concern (no inter-host all-reduce; SPMD partitioner emits a
+        # single xla::all_reduce HLO op). Only the per-param graph-
+        # break storm remains as a re-enable risk. Three known-safe
+        # variants for re-enabling on single-host v6e-8:
+        #
+        #   6a. Fused single-graph clip (preferred):
+        #       total_sq = sum((g.float()**2).sum() for g in grads)
+        #       coef = max_norm / (total_sq.sqrt() + 1e-6)
+        #       coef = torch.where(coef < 1.0, coef, torch.ones_like(coef))
+        #       for p in params: p.grad.mul_(coef)
+        #       xm.mark_step()
+        #     -> 1 fused HLO, ~5-15% throughput cost, populates metric
+        #
+        #   6b. clip_grad_value_(parameters, max_value):
+        #       element-wise clamp_; smallest graph; loses norm metric
+        #
+        #   6c. vanilla torch.nn.utils.clip_grad_norm_(...,
+        #       error_if_nonfinite=False):
+        #       per-param graph break (~550/step under FSDPv2); high
+        #       recompile risk; not recommended for v6e-8.
+        #
+        # See .factory/memories.md "lever 6 variants" for full details.
         if is_tpu:
             import torch_xla.core.xla_model as _xm
             _xm.mark_step()

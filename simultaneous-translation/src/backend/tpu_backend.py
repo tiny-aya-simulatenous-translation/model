@@ -496,10 +496,20 @@ class TPUBackend(BackendBase):
         For routine training we only print the master chip's usage,
         which is representative under SPMD because each chip holds
         roughly the same shard.
+
+        iter 18 lever 3 fix: under SPMD, ``xm.get_memory_info`` reads
+        HBM that is already materialised on chip. If the call lands
+        between two ``mark_step`` boundaries the lazy graph hasn't
+        been compiled+executed yet and HBM reads as 0 GB. We force a
+        sync (``mark_step()`` + ``wait_device_ops()``) so the values
+        reflect the post-step state. Verified by ``_artifacts/
+        memory_probe.py`` which got real numbers only after sync.
         """
         try:
             import torch_xla.core.xla_model as xm
 
+            xm.mark_step()
+            xm.wait_device_ops()
             mem = xm.get_memory_info(self.get_device())
             return {
                 "allocated_gb": mem.get("bytes_used", 0) / 1e9,

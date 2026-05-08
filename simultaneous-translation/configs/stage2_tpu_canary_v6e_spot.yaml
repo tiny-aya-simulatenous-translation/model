@@ -35,7 +35,12 @@ data:
   encoded_dir: /mnt/data/encoded
   train_split: /mnt/data/splits/train.jsonl
   val_split: /mnt/data/splits/val.jsonl
-  max_frames: 300
+  # iter 18 lever 2: max_frames 300 -> 400. Per-chip token batch
+  # 16 * 400 = 6400 tokens (vs iter 17's 8 * 300 = 2400). Pushes
+  # deeper into the compute-bound regime; activations scale linearly
+  # in seq length, so HBM grows ~33% which is comfortable given
+  # measured ceiling of 31.246 GiB/chip.
+  max_frames: 400
   audio_frame_rate: 12.5
   num_workers: 4
   pin_memory: false
@@ -46,11 +51,16 @@ data:
 # ---------------------------------------------------------------------
 train:
   num_codebooks: 8
-  # batch=1, accum=2 matches iter 7's effective batch shape better.
-  # Combined with float32 precision, this bisects the v4 vs v6e gap.
-  batch_size: 1
+  # iter 18 lever 1: batch_size 8 -> 16 (KEEP xla_grad_checkpoint=true).
+  # Effective batch = 16 * 2 * 8 = 256 (2x iter 17's 128).
+  # Per-chip activations ~10-12 GB with grad_checkpoint halving;
+  # static params + optim ~2.6 GB; XLA scratch ~3 GB -> peak HBM
+  # ~14-16 GB / chip vs measured ceiling 31.246 GiB (~50% util,
+  # ~2x safety). Dropping grad_checkpoint at b=16 would push to
+  # ~22-26 GB (~80%, OOM tail risk) -- deferred to iter 19+.
+  batch_size: 16
   grad_accum: 2
-  max_steps: 20
+  max_steps: 200
   warmup_steps: 50
   depth_chunk_size: 16
   # iter 14: bf16 with attention-mask monkey-patch (train_hierarchical.py
@@ -58,14 +68,18 @@ train:
   # the pytorch/xla #4152 overflow). Falls back to fp32 if NaN reappears.
   precision: bfloat16
 
-  # Same disable as the v4 canary. v6e has 32 GiB/chip like v4, so
-  # the activation budget is the same; canary should compile and
-  # train without checkpointing. See stage2_tpu_canary.yaml for the
-  # full rationale (scan_layers _ensure_same_structure rejects our
-  # mixed LoRA / FullFT layer set, is_layer_pure FakeTensor crash,
-  # persistent cache deserialize broken on torch_xla 2.9).
+  # `scan_layers` remains disabled. _ensure_same_structure rejects our
+  # mixed LoRA[0:33] / FullFT[34:35] layer set (pytorch/xla #8612),
+  # is_layer_pure FakeTensor crash, persistent cache deserialize broken
+  # on torch_xla 2.9. Compile is already tractable without it.
   use_scan_layers: false
-  xla_grad_checkpoint: false
+  # iter 16: enable XLA gradient checkpointing on the scan units.
+  # _xla_safe_checkpoint dodges the torch 2.9 + torch_xla 2.9
+  # `_get_device_module("xla")` regression. Cuts activation memory
+  # ~50% at the cost of ~30% backward recompute -- the right tradeoff
+  # when batch=4 multiplies activation pressure 4x but per-chip
+  # 32 GiB HBM is currently <15% utilized.
+  xla_grad_checkpoint: true
 
   # Patch 19 (HF transformers issue #36004 fix): destructive end-of-
   # training save. Moves the entire FSDPv2-wrapped model to CPU on all
