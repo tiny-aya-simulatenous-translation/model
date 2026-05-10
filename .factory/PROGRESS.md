@@ -26,6 +26,13 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-10T08:55:20Z | feat/tpu-support@07dcb2c | done | verify
+log10 1000-step validation config added and repository verification passed.
+
+New config: simultaneous-translation/configs/stage2_tpu_v6e_spot_opt_log10_1k.yaml
+.factory/VERIFY.md: all 20 fenced bash blocks passed; TPU probes skipped on workstation because PJRT_DEVICE is unset.
+
+
 ## 2026-05-10T08:46:51Z | feat/tpu-support@ee9295d | done | verify
 Repository verification passed after opt-1-log25 result updates.
 

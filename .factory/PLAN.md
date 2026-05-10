@@ -28,7 +28,8 @@ preserving stability, checkpoint safety, and evaluation quality.
 - **Phase 1 result:** `opt-1-log10` and `opt-1-log25` both completed
   300/300 steps without NaN/OOM/traceback. `log10` finished with p50
   `5.9509s`, p90 `5.9741s`, p99 `6.2421s`; `log25` finished with p50
-  `5.9213s`, p90 `6.0600s`, p99 `40.9924s`.
+  `5.9213s`, p90 `6.0600s`, p99 `40.9924s`. `log10` is selected
+  for the 1000-step validation gate.
 
 ## Definition of Done
 
@@ -65,7 +66,7 @@ preserving stability, checkpoint safety, and evaluation quality.
 
 - [x] Test `log_every=10` against baseline.
 - [x] If stable, test `log_every=25`.
-- [ ] Promote the fastest logging cadence that keeps monitoring useful.
+- [x] Promote the fastest logging cadence that keeps monitoring useful.
 
 ### Phase 2 — Compile warmup before visible step 1
 
