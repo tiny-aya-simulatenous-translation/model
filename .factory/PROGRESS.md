@@ -26,6 +26,46 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-10T18:28:16Z | feat/tpu-support@74f8879 | done | verify
+Repository verification passed after v6e capacity-failure record.
+
+.factory/VERIFY.md: all 20 fenced bash blocks passed; TPU probes skipped on workstation because PJRT_DEVICE is unset.
+
+
+## 2026-05-10T18:27:49Z | feat/tpu-support@74f8879 | block | exec
+Second opt-1-log10-1k spot retry failed due v6e capacity exhaustion.
+
+QR tinyaya-stage2-spot-v6e8-eu-qr stayed PROVISIONING for about 2h, then SUSPENDING -> FAILED.
+failedData code 8: no more capacity in zone europe-west4-a. No W&B run or training process started.
+Diagnosis: external spot-capacity failure, not code/candidate failure. Next options are wait/retry later, try another zone/topology, switch on-demand, or pause.
+
+
+## 2026-05-10T18:27:36Z | feat/tpu-support@74f8879 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-10T18:27:36Z | feat/tpu-support@74f8879 | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-10T16:05:34Z | feat/tpu-support@74f8879 | done | exec
+Recreated v6e-8 spot QR for opt-1-log10-1k second retry.
+
+User explicitly approved another spot retry after immediate service preemption.
+QR: tinyaya-stage2-spot-v6e8-eu-qr; node: tinyaya-stage2-spot-v6e8-eu; zone: europe-west4-a; accelerator: v6e-8 spot.
+Config: configs/stage2_tpu_v6e_spot_opt_log10_1k.yaml; repo tarball: gs://tinyaya-stage2-tpu/code/tinyaya-repo-log10-1k-retry.tar.gz.
+
+
 ## 2026-05-10T16:01:17Z | feat/tpu-support@6ca66fa | done | verify
 Repository verification passed after retry preemption record.
 
