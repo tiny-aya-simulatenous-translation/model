@@ -9,9 +9,13 @@ Usage:
     python cli.py encode
     python cli.py run-all
 """
-import argparse
+from __future__ import annotations
 
-from src.config import PipelineConfig
+import argparse
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.config import PipelineConfig
 
 
 def cmd_extract(args, config: PipelineConfig):
@@ -102,6 +106,8 @@ def main():
 
     args = parser.parse_args()
     from pathlib import Path
+    from src.config import PipelineConfig
+
     config = PipelineConfig(data_dir=Path(args.data_dir))
     config.load_voice_refs(Path(args.ref_dir), max_voices_per_model=args.max_voices)
 

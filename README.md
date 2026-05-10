@@ -8,7 +8,7 @@
 [![PyTorch](https://img.shields.io/badge/pytorch--xla-2.9-orange.svg)](https://pytorch.org/xla/release/r2.9/index.html)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](#license)
 [![Branch](https://img.shields.io/badge/branch-feat%2Ftpu--support-purple.svg)](https://github.com/)
-[![Status](https://img.shields.io/badge/canary-v6e--8%20EU%20iter%2013b%20passing-success.svg)](#milestones)
+[![Status](https://img.shields.io/badge/production-v6e--8%205000%20steps%20done-success.svg)](#milestones)
 
 ---
 
@@ -66,7 +66,7 @@ canary-to-production loop autonomously with mandatory user check-ins.
 - **Cross-host single-pane observability** — on multi-host topologies
   (legacy v4-32, future v6e-64) wandb shared-mode rendezvous via GCS
   attaches all hosts to one run instead of N parallel runs. The
-  current single-host v6e-8 canary skips this entirely: ONE Python
+  current single-host v6e-8 production path skips this entirely: ONE Python
   process drives all 8 chips via SPMD, so there is exactly ONE wandb
   run with no rendezvous needed.
 - **Self-healing orchestrator** — bounded autonomous iteration with
@@ -146,7 +146,7 @@ tinyaya-stage2-scale/
 │   ├── PROGRESS.md  PLAN.md  VERIFY.md  memories.md
 │   ├── orchestration/                       # self-healing spec + diagrams
 │   ├── skills/  droids/  hooks/  commands/
-│   └── _settings.json
+│   └── settings.json
 ├── simultaneous-translation/                # training / model / eval
 │   ├── AGENTS.md                            # subproject norms
 │   ├── configs/                             # YAML configs (canary, prod, spot)
@@ -203,10 +203,10 @@ cd phase-3-data-generation-pipeline && uv sync && cd ..
 bash .factory/skills/verify/SKILL.md   # or: /verify (slash command)
 ```
 
-### One-command TPU canary launch
+### One-command TPU production launch
 
 ```bash
-# v6e-8 spot in europe-west4-a (CURRENT canary topology)
+# v6e-8 spot in europe-west4-a (current validated production topology)
 TRC_PROFILE=v6e-8-eu \
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
@@ -218,13 +218,13 @@ PROBE_FIRST=1 \
 
 The launch script creates the queued resource, attaches the startup
 script (which clones from GCS, extracts the encoded dataset, and
-starts training under tmux), and watches the canary's first hour.
+starts training under tmux), and watches the run's first hour.
 
 The legacy v4-32 spot path in `us-central2-b`
 (`TRC_PROFILE=v4-32-uc2b`,
 `CONFIG_FILE=configs/stage2_tpu_canary_v4_spot.yaml`) is still
-supported but historical -- it ran iter 1-11 and is currently
-SUSPENDED while we validate iter 14 on v6e-8 EU.
+supported but historical -- it ran iter 1-11 before the v6e-8 path
+completed the 5000-step iter 24h production run.
 
 ---
 
@@ -243,7 +243,7 @@ python ../simultaneous-translation/scripts/make_splits.py \
     --out-dir data/splits --val-frac 0.10 --seed 42
 ```
 
-### 2. Training (TPU, multi-host)
+### 2. Training (TPU)
 
 ```bash
 cd simultaneous-translation
@@ -257,6 +257,8 @@ uv run python scripts/train_hierarchical.py \
 
 On a TPU pod the script auto-discovers PJRT, picks `TPU_STRATEGY` from
 env, casts to `bfloat16` inside `wrap_model`, and shards via FSDPv2.
+On the validated v6e-8 topology this is one Python process driving
+8 chips; legacy v4-32 and future v6e-64 use one process per host.
 
 ### 3. Eval (workstation or single-chip TPU)
 
@@ -300,7 +302,7 @@ hosts in parallel.
 ### Probe SPMD strategies on the live mesh
 
 ```bash
-# v6e-8 EU (current canary)
+# v6e-8 EU (current production topology)
 gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu \
     --project=ml-pipelines-315702 --zone=europe-west4-a \
     --worker=0 --command='cd /opt/tinyaya/simultaneous-translation \
@@ -325,7 +327,7 @@ gcloud compute tpus tpu-vm ssh <node> --project=ml-pipelines-315702 \
 
 | Priority | Profile         | Region            | Notes |
 |----------|-----------------|-------------------|-------|
-| 0        | spot v6e-8      | europe-west4-a    | **Current canary (single-host, 8 chips, 32 GiB HBM/chip)** |
+| 0        | spot v6e-8      | europe-west4-a    | **Current production path (single-host, 8 chips, 32 GiB HBM/chip)** |
 | 1        | on-demand v4-64 | us-central2-b     | TRC primary |
 | 2        | spot v4-32      | us-central2-b     | Legacy / superseded -- ran iter 1-11, currently SUSPENDED |
 | 3        | spot v5e-64     | europe-west4-b    | Biggest spot grant |
@@ -472,8 +474,9 @@ Configs live in `simultaneous-translation/configs/`. The ones you
 will touch most:
 
 - `stage2_tpu_v6e_spot.yaml` — production v6e-8 spot config
-  (CURRENT). `max_steps=5000`, `save_every=0` (canonical
-  end-of-training save only), effective batch 256 = 16 × 2 × 8.
+  (CURRENT, validated by iter 24h). `max_steps=5000`, `save_every=0`
+  (canonical end-of-training save only), effective batch 256 =
+  8 × 4 × 8.
 - `stage2_tpu_canary_v4_spot.yaml` — legacy canary on v4-32 spot.
   `max_steps=200`, `save_every=100` (preempt-resilient),
   effective batch 64 = 2 × 2 × 16.
@@ -486,8 +489,8 @@ where it is. Notable knobs:
 
 | Path                          | Default | Notes |
 |-------------------------------|---------|-------|
-| `train.batch_size`            | 2       | Per-chip batch. v4 has 32 GiB/chip; v5e has 16. |
-| `train.grad_accum`            | 2       | Effective_batch = batch × accum × num_chips. |
+| `train.batch_size`            | 8 (v6e prod) / 2 (legacy canary) | Per-chip batch. v6e/v4 have ~32 GiB/chip; v5e has 16. |
+| `train.grad_accum`            | 4 (v6e prod) / 2 (legacy canary) | Effective_batch = batch × accum × num_chips. |
 | `train.use_scan_layers`       | false   | Disabled — `_ensure_same_structure` rejects LoRA[0:33]+FullFT[34:35] split (pytorch/xla #8612). |
 | `train.xla_grad_checkpoint`   | false   | Disabled — patch 11 (fixed-shape padding) made it unnecessary. |
 | `data.max_frames`             | 300     | Patch 11: collator pads every batch to this; XLA compiles one HLO. |
@@ -510,7 +513,7 @@ torch_xla ≥ 2.6 and silently no-op. Use the explicit
 
 ## Hardware budget
 
-### v6e-8 topology (current canary)
+### v6e-8 topology (current production path)
 
 | Property              | Value                |
 |-----------------------|----------------------|
@@ -544,7 +547,7 @@ below applies to both topologies unchanged.
 | Strategy       | Backbone               | Activations | Total       | Verdict |
 |----------------|------------------------|-------------|-------------|---------|
 | replicated     | 10.34 GB               | 5-10 GB     | 18-24 GB    | OOM on v5e + v4 / v6e |
-| fsdpv2_lora    | 0.65 GB sharded + 0.6 GB frozen | 5-10 GB | 7-12 GB | **canary default** |
+| fsdpv2_lora    | 0.65 GB sharded + 0.6 GB frozen | 5-10 GB | 7-12 GB | **production default** |
 | fsdpv2         | 0.65 GB sharded        | 5-10 GB     | 6-11 GB     | If fsdpv2_lora hits ceiling |
 
 Empirical (iter 7 on v4-32 spot, batch 2 x accum 2 x 16 chips, **legacy v4-32 baseline**):
@@ -553,11 +556,23 @@ Empirical (iter 7 on v4-32 spot, batch 2 x accum 2 x 16 chips, **legacy v4-32 ba
 - Steady-state: 3.41 sec/step
 - Loss step 10 -> 100: 9.0273 -> 7.5983 (decreasing)
 
-Empirical (iter 13b on v6e-8 spot EU, batch 1 x accum 2 x 8 chips, **current**):
+Empirical (iter 13b on v6e-8 spot EU, batch 1 x accum 2 x 8 chips, **canonical-save validation**):
 
 - 20 steps + canonical save in 23.3 min wall (run `zd42n7di`)
 - fp32 1.60 sec/step steady-state
 - 2.4 GB checkpoint written; patch 19 canonical-save validated
+
+Empirical (iter 24h on v6e-8 spot EU, batch 8 x accum 4 x 8 chips, **production**):
+
+- 5000/5000 steps in 615.9 min wall (run
+  [`7rrjupc7`](https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7))
+- Final loss 5.3558 (`text=10.3176`, `audio=4.3240`)
+- Steady-state ~6.7-7.0 sec/step after startup compilation
+- Final canonical checkpoint uploaded to
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+  (8 objects, 2.37 GiB)
+- No NaN, OOM, RESOURCE_EXHAUSTED, fatal, traceback, bus-error, or
+  kernel-panic signals
 
 ---
 
@@ -577,6 +592,8 @@ Empirical (iter 13b on v6e-8 spot EU, batch 1 x accum 2 x 8 chips, **current**):
 | Spot pre-emption | TRC quota reclaim | Already mitigated by `save_every=100` + `WANDB_RESUME=allow` + tmux supervisor restart loop |
 | `gcloud ssh ... Connection refused` for ≥ 3 polls | VM-level corruption | **Tier 3** — escalate, never auto-recreate the QR |
 | v6e bf16 NaN at step 1 | pytorch/xla #4152 (HF mask `torch.finfo(fp32).min` -> -inf in bf16) and v6e libtpu numerics #8591 / #8778 | Apply patch 20b -- `_patch_attention_mask_for_bf16` monkey-patch clamps mask values >= -1e4 (called at top of `train_hierarchical.py`); fall back to `precision: float32` if NaN persists |
+| NaN or OOM at step 258/259 | Grad-accum macro-step straddles a DataLoader epoch reset, producing a new XLA graph topology | Iter 24h fix -- pad TPU tail batches to `batch_size`, keep `drop_last=False`, and reset epochs only between optimizer steps |
+| Step 1/2 show 1000s+ wall time | Optimizer-state graph compiles after first visible step | Expected in iter 24h; no late recompiles after step 2. Future cleanup should pre-warm before visible `step 1` |
 | Canonical save writes to `gs:/checkpoints/...` instead of GCS | `torch.save` does not understand `gs://` URIs | Apply patch 20a -- `save_checkpoint_canonical_final` runs `gsutil cp -r` post-save to upload to the actual GCS prefix |
 
 For deeper diagnosis, attach py-spy to the *real* python PID (not the
@@ -589,6 +606,22 @@ sudo /tmp/py_spy-0.4.2.data/scripts/py-spy dump --pid <REAL_PID> --native
 ---
 
 ## Milestones
+
+### 2026-05-10 — First 5000-step TPU production run (iter 24h)
+
+- **Run:** [`7rrjupc7`](https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7)
+- **Hardware:** TPU v6e-8 spot, europe-west4-a, single host x 8 chips
+- **Steps:** 5000/5000
+- **Wall time:** 615.9 min
+- **Final loss:** 5.3558 (`text=10.3176`, `audio=4.3240`)
+- **Checkpoint:** `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+  (8 objects, 2.37 GiB)
+- **Stability:** no NaN/OOM/fatal signals; no late recompiles after
+  the startup cluster around steps 1-2
+
+This validates the iter 24h step-259 topology fix: TPU tail batches
+are padded to a static batch dimension and epoch resets happen only
+between optimizer steps, not inside the 4-way grad-accum graph.
 
 ### 2026-05-08 — Patch 19 canonical save validated on v6e-8 (iter 13b)
 
@@ -625,18 +658,19 @@ spot capacity ran out).
 
 ## Roadmap
 
-- [ ] Validate iter 14 patch 20a (GCS upload via
-  `gsutil cp -r` inside `save_checkpoint_canonical_final`) +
-  patch 20b (HF `AttentionMaskConverter` monkey-patch clamping mask
-  values >= -1e4 to dodge pytorch/xla #4152 bf16 NaN) on v6e-8 EU.
-- [ ] Run v6e-8 canary to `max_steps=200`; confirm checkpoint reaches
+- [x] Validate patch 20a (GCS upload via `gsutil cp -r`) and patch
+  20b (HF `AttentionMaskConverter` clamp to >= -1e4) on v6e-8 EU.
+- [x] Run v6e-8 canary to `max_steps=200`; confirm checkpoint reaches
   the actual `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/`
-  prefix (not the local `gs:/...` path bug).
+  prefix.
+- [x] Phase 5: complete 5000-step production run on v6e-8 EU
+  (iter 24h).
+- [ ] `eval_stage2.py` ASR-BLEU + DNSMOS on the iter 24h final
+  checkpoint.
+- [ ] Cleanup: pre-warm optimizer-state compilation before visible
+  `step 1`.
 - [ ] Scale to v6e-64 multi-host pod once spot capacity allows.
 - [ ] Decide on patches 12-13 (skip audio sample + validation on TPU).
-- [ ] Phase 5: 5000-step run on v6e-8 EU (continued) or graduate to
-  v6e-64 multi-host once iter 14 is green.
-- [ ] `eval_stage2.py` ASR-BLEU + DNSMOS on best-by-val checkpoint.
 - [ ] Re-evaluate `xla_grad_checkpoint=true` to free HBM for
   larger effective batch.
 

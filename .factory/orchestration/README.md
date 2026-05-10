@@ -1,9 +1,19 @@
 # `.factory/orchestration/`
 
-Source-of-truth design artifacts for the **TPU canary self-healing
+Source-of-truth design artifacts for the **TPU production self-healing
 orchestrator**. Implementation files live elsewhere (skills, droids,
 poller); this folder holds the **spec + diagrams + playbook** that
 drive how the orchestrator behaves.
+
+## 2026-05-10 status
+
+The orchestrator has now driven the v6e-8 path through the first full
+Phase 5 production run: iter 24h reached 5000/5000 steps on
+`tinyaya-stage2-spot-v6e8-eu`, exited with status 0, and uploaded the
+canonical checkpoint to
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`.
+The same playbook remains active for future cleanup, evaluation
+follow-ups, and v6e-64 scale-up attempts.
 
 ## Layout
 

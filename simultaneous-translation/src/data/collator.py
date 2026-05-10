@@ -7,9 +7,13 @@ samples have variable frame lengths, so :class:`InterleavedCollator`
 right-pads each batch element to the longest sequence and emits the
 attention mask + per-sample loss mask the loss function expects.
 
-The collator is shared by Stage 1 and Stage 2 datasets. There is no
-TPU-specific behaviour here -- padding is done on host CPU and the
-DataLoader hands the result to the device just like on GPU.
+For TPU/XLA callers, the collator can also pad the batch axis itself.
+That keeps the SPMD graph static even for the final short DataLoader
+batch at an epoch boundary.
+
+The collator is shared by Stage 1 and Stage 2 datasets. Padding is done
+on host CPU and the DataLoader hands the result to the device just like
+on GPU.
 """
 
 import torch
@@ -29,12 +33,19 @@ class InterleavedCollator:
         audio_pad_id: int = 0,
         text_pad_id: int = ZERO_PADDING,
         pad_to: int | None = None,
+        batch_pad_to: int | None = None,
+        expected_num_codebooks: int | None = None,
     ):
         self.audio_pad_id = audio_pad_id
         self.text_pad_id = text_pad_id
         self.pad_to = pad_to
+        self.batch_pad_to = batch_pad_to
+        self.expected_num_codebooks = expected_num_codebooks
 
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
+        if not batch:
+            raise ValueError("InterleavedCollator received an empty batch")
+
         lengths = [item["num_frames"] for item in batch]
         # When pad_to is set, every batch is padded to the SAME length so the
         # XLA tracer sees one input shape and compiles a single graph. With
@@ -45,17 +56,25 @@ class InterleavedCollator:
         max_len = self.pad_to if self.pad_to is not None else max(lengths)
         # Truncate any over-long sample (defensive; dataset already truncates)
         if self.pad_to is not None:
-            lengths = [min(l, self.pad_to) for l in lengths]
-        B = len(batch)
+            lengths = [min(length, self.pad_to) for length in lengths]
+        real_b = len(batch)
+        B = self.batch_pad_to if self.batch_pad_to is not None else real_b
+        if real_b > B:
+            raise ValueError(f"batch has {real_b} rows but batch_pad_to={B}")
 
         # Get number of codebooks from first sample
-        num_codebooks = batch[0]["audio_codes"].shape[0]
+        num_codebooks = self.expected_num_codebooks or batch[0]["audio_codes"].shape[0]
 
         # Pad audio codes: [B, CB, T_max]
         audio_codes = torch.full((B, num_codebooks, max_len), self.audio_pad_id, dtype=torch.long)
         for i, item in enumerate(batch):
             T = min(item["audio_codes"].shape[1], max_len)
-            audio_codes[i, :, :T] = item["audio_codes"][:, :T]
+            if item["audio_codes"].shape[0] < num_codebooks:
+                raise ValueError(
+                    f"sample has {item['audio_codes'].shape[0]} codebooks; "
+                    f"expected at least {num_codebooks}"
+                )
+            audio_codes[i, :, :T] = item["audio_codes"][:num_codebooks, :T]
 
         # Pad text IDs: [B, T_max]
         text_ids = torch.full((B, max_len), self.text_pad_id, dtype=torch.long)
@@ -67,6 +86,8 @@ class InterleavedCollator:
         attention_mask = torch.zeros(B, max_len, dtype=torch.long)
         for i, T in enumerate(lengths):
             attention_mask[i, :T] = 1
+        if B > real_b:
+            lengths = lengths + [0] * (B - real_b)
 
         result = {
             "audio_codes": audio_codes,

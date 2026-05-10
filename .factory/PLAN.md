@@ -1,4 +1,4 @@
-# PLAN — Lock in TPU canary success and graduate to Phase 5
+# PLAN — Record iter 24h production success and prepare evaluation
 
 > Active goal. Edited automatically by the `update-plan` skill via the
 > `Stop` hook. Manual edits via `/plan` (regenerate from current goal)
@@ -6,19 +6,38 @@
 
 ## Goal
 
-Validate the **single-host v6e-8 EU** spot canary at >= 200
-successful steps with the patches landed during the iter 1-13 self-
-heal loop (now extended with patches 20a/b for v6e-specific bf16
-NaN + GCS upload), then graduate to the 5000-step Phase 5 run on
-either v6e-8 EU (continued) or v6e-64 multi-host once spot capacity
-allows. The legacy v4-32 spot path in `us-central2-b` carried the
-canary through iter 1-11 (run `8pse8tzk` reached step 100 on v4-32);
-it is preserved as historical baseline only -- v4 spot capacity has
-been reclaimed.
+Record the first successful **5000-step Phase 5 production run** on
+single-host v6e-8 EU spot, commit the validated iter 24h code/docs, and
+prepare the downstream evaluation pass against the final canonical
+checkpoint. The legacy v4-32 spot path in `us-central2-b` carried the
+early canary through iter 1-11 (run `8pse8tzk` reached step 100 on
+v4-32); it is preserved as historical baseline only.
+
+## Status snapshot (2026-05-10)
+
+- **Production milestone complete:** iter 24h finished
+  **5000/5000 steps** on single-host v6e-8 EU spot
+  (`tinyaya-stage2-spot-v6e8-eu`) with exit status 0.
+- **W&B:** `v6e-spot-stage2-5k-iter24h`, run `7rrjupc7`:
+  https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7.
+- **Final training stats:** step 5000 loss 5.3558
+  (`text=10.3176`, `audio=4.3240`); training wall time 615.9 min.
+- **Checkpoint:** canonical final save uploaded to
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+  (8 objects, 2.37 GiB: depth decoder, text embeddings, audio heads,
+  projection, metadata, and PEFT adapter files).
+- **Stability:** no NaN, OOM, RESOURCE_EXHAUSTED, fatal, traceback,
+  bus-error, or kernel-panic signals were found in `/tmp/train.log`.
+- **Compile behavior:** 18 XLA compilation causes total; 12 before the
+  first visible step and 6 around steps 1-2. No late recompiles through
+  step 5000. Future cleanup can pre-warm the optimizer-state graph
+  before the visible `step 1` line, but it is not blocking correctness.
+- **Next milestone:** run `eval_stage2.py` against the final checkpoint
+  and record ASR-BLEU + DNSMOS.
 
 ## Status snapshot (2026-05-08)
 
-- **Topology pivot:** active canary is now single-host TPU v6e-8 spot
+- **Topology pivot (historical):** canary moved to single-host TPU v6e-8 spot
   in `europe-west4-a` (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
   `tinyaya-stage2-spot-v6e8-eu`). v4-32 spot in `us-central2-b` is
   SUSPENDED (no spot capacity) and now treated as legacy.
@@ -62,18 +81,19 @@ been reclaimed.
   shared-mode + rank-0 publish to GCS rendezvous).
 - [x] >= 100 successful training steps with monotonically decreasing
   loss (9.0273 -> 7.5983 over steps 10 -> 100).
-- [ ] >= 200 successful steps (canary `max_steps=200`); checkpoint
+- [x] >= 200 successful steps (canary `max_steps=200`); checkpoint
   written to
   `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-canary/step_000200_final/`
-  (active in Phase 11 on v6e-8 EU; bf16 + patch 20a/b in flight).
-- [ ] Patches 12 + 13 either landed and verified, or proven
-  unnecessary by iter 7+ profile.
+  (completed in Phase 11 on v6e-8 EU).
+- [x] Patches 12 + 13 either landed and verified, or proven
+  unnecessary for the production path. They remain deferred because
+  the v6e-8 5000-step run used canonical end-of-training save only.
 - [ ] All commands in `VERIFY.md` (monorepo + simultaneous-translation
   sections) pass on workstation.
 
 ### Phase 5 (next)
 
-- [ ] 5000-step run completes (canary -> full config); final loss
+- [x] 5000-step run completes (canary -> full config); final loss
   recorded in `memories.md` Milestones.
 - [ ] `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
   best-by-val checkpoint.
@@ -131,11 +151,11 @@ been reclaimed.
 
 - [x] Configs ready: `configs/stage2_tpu.yaml` has both
   `train.use_scan_layers: true` and `train.xla_grad_checkpoint: true`.
-- [ ] Use `scripts/tpu/launch_qr.sh` to start a fresh queued resource
+- [x] Use `scripts/tpu/launch_qr.sh` to start a fresh queued resource
   with `TPU_STRATEGY=<chosen>` metadata.
-- [ ] Monitor via `tmux attach -t train` or
+- [x] Monitor via `tmux attach -t train` or
   `tail -f /tmp/train.log` for first hour.
-- [ ] Confirm W&B run ID + checkpoint GCS prefix.
+- [x] Confirm W&B run ID + checkpoint GCS prefix.
 - [ ] Run `eval_stage2.py` on the best-by-val checkpoint; record
   ASR-BLEU + DNSMOS.
 
@@ -266,7 +286,7 @@ Throughput **5.96x** iter 14 (54.2 vs 9.1 examples/sec).
   launcher. 4 trace dirs uploaded to
   `gs://tinyaya-stage2-tpu/profiles/iter20-*` (`9131e0f`).
 
-### Phase 13 — Iter 24 5000-step production run (active)
+### Phase 13 — Iter 24 5000-step production run (DONE)
 
 Goal: complete the first 5000-step Phase 5 production run on
 single-host v6e-8. Iter 21/22/23 all OOM-crashed at step 258 with
@@ -317,17 +337,41 @@ re-enables every previously gated knob.
   https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/83evwy38;
   validate `[fsdpv2] applied backward optimization barrier to 42
   layers` (CONFIRMED at runtime).
-- [ ] Iter 24c: no NaN through step 30 (the 24a/24b regression
-  boundary).
-- [ ] Iter 24c: no NaN through step 100; first compile completes.
-- [ ] Iter 24c: past historical step 258 OOM threshold without
-  RESOURCE_EXHAUSTED (barrier-only path).
-- [ ] Iter 24c: reach step 5000 with monotonic loss decrease;
+- [x] Iter 24c: FAILED at step 32 (audio_loss NaN first); per-layer
+  wraps contributed but barrier helper remained a NaN trigger.
+- [x] Iter 24d: drop lever 6, keep barrier; FAILED at step 3. Lever 6
+  was masking the NaN, not causing it.
+- [x] Iter 24e: drop barrier helper and lever 6; CLEAN through step
+  258, then historical boundary reproduced.
+- [x] Iter 24f: b=8/grad_accum=4; CLEAN through step 258, then step
+  259 compiled a 28.3 GB graph and audio_loss NaN'd first.
+- [x] Iter 24g patch: freeze the step-259 graph topology via TPU
+  `drop_last=True`, static-shape assertions, and disabled HF SDPA
+  mask elision; upload
+  `gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter24g.tar.gz`.
+- [x] Iter 24h patch: pad TPU tail batches instead of `drop_last`,
+  and guarantee epoch reset happens only between optimizer steps;
+  upload `gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter24h.tar.gz`.
+- [x] Launch iter 24h on a usable TPU; announce W&B URL.
+  W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7.
+- [x] Iter 24h: pass step 300 with no NaN and no RESOURCE_EXHAUSTED.
+- [x] Iter 24h: reach step 5000 with stable finite loss;
   canonical save to
-  `gs://.../stage2-tpu-v6e-spot/step_005000_final/` succeeds.
-- [ ] Iter 24c: gsutil cp profile dir to GCS; verify
-  TensorBoard-readable.
-- [ ] Commit iter 24c.
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+  succeeds.
+- [x] Verify final GCS checkpoint listing: 8 objects, 2.37 GiB.
+- [x] Commit iter 24h after live validation.
+
+### Phase 14 — Post-run evaluation and cleanup (next)
+
+- [ ] Run `eval_stage2.py` against
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`.
+- [ ] Record ASR-BLEU, DNSMOS, representative samples, and any quality
+  regressions in `memories.md`.
+- [ ] Decide whether to run a follow-up quality-tuning pass or move to
+  v6e-64 / inference packaging.
+- [ ] Cleanup patch: move optimizer-state/warmup compilation before
+  visible `step 1` so the first printed training step is steady-state.
 
 ## Out of scope
 

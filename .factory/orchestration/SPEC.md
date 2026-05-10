@@ -1,10 +1,10 @@
 # TPU Canary Self-Healing Orchestrator -- SPEC
 
-## 2026-05-08 update banner
+## 2026-05-10 update banner
 
 The original SPEC below describes the v4-32 spot canary in
 `us-central2-b` (4 hosts, 4 Python processes). Since 2026-05-08 the
-active canary has pivoted to **single-host TPU v6e-8 spot in
+active topology has pivoted to **single-host TPU v6e-8 spot in
 `europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, ONE Python
 process driving 8 chips via SPMD). All references to "4 worker
 PIDs", multi-host wandb shared-mode rendezvous, and the
@@ -15,9 +15,16 @@ session, ONE wandb run; on legacy v4-32 / future v6e-64 it inspects
 diagnosis table are topology-agnostic and remain the source of
 truth.
 
-**Version:** v2 (2026-05-06)
-**Status:** Approved (current canary is single-host v6e-8 EU since
-2026-05-08)
+Iter 24h validated this topology for production: 5000/5000 steps,
+W&B run `7rrjupc7`, final loss 5.3558, exit status 0, and canonical
+checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`.
+Future orchestrator use should treat "canary" language below as the
+same bounded self-healing loop applied to production cleanup and
+scale-up runs.
+
+**Version:** v3 (2026-05-10)
+**Status:** Approved and production-validated on single-host v6e-8 EU
 **Branch:** `feat/tpu-support`
 **Implementation:** Option B (Skills + Custom Droids hybrid)
 
@@ -25,9 +32,9 @@ truth.
 
 ## 1. Goal
 
-Drive the v4-32 spot canary to a known-good first compile + decreasing
-loss with **bounded autonomous iteration** (legacy; current canary is
-single-host v6e-8 EU since 2026-05-08). Fix-and-redeploy on
+Drive TPU canary or production runs to a known-good compile + decreasing
+loss with **bounded autonomous iteration** (legacy v4-32 canary;
+current production path is single-host v6e-8 EU). Fix-and-redeploy on
 classified errors without re-asking; pause for human only on
 (a) success, (b) check-in milestone, or (c) circuit-breaker trip.
 

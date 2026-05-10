@@ -22,7 +22,184 @@
 
 ## Architecture decisions
 
-### 2026-05-08: Iter 24c -- v6e bf16 reduce-scatter NaN bug forces barrier-only OOM mitigation
+### 2026-05-10: Iter 24h -- first 5000-step v6e-8 production run completed
+
+**Decision (validated):** Iter 24h is the first successful Phase 5
+production run on single-host v6e-8 spot. The remaining step-259
+topology bug was a grad-accum epoch-boundary graph switch: iter 24g's
+``drop_last=True`` kept micro-batches full-size, but the train split
+has 8,283 rows. At ``batch_size=8`` that produced 1,035 micro-batches;
+with ``grad_accum=4``, step 259 still crossed the epoch boundary inside
+one XLA-traced macro-step. Iter 24h pads the final TPU batch and only
+resets epochs between optimizer steps, so XLA sees the same
+four-microbatch graph for the full 5000 steps.
+
+**Patch pattern (SUPERSEDES iter 24g data-loader part):**
+1. ``InterleavedCollator`` now supports ``batch_pad_to`` and
+   ``expected_num_codebooks``. On TPU, the final short DataLoader batch
+   is padded on the host to ``[batch_size, num_codebooks, max_frames]``;
+   padded rows get zero attention/loss masks.
+2. TPU training uses ``drop_last=False`` again, preserving all examples
+   while still presenting a static batch dimension to XLA.
+3. The training loop tracks micro-batches consumed in the current epoch
+   and resets the iterator only **between** optimizer steps, never inside
+   a 4-way grad-accum graph.
+4. Iter 24g's SDPA mask-elision patch remains in place.
+
+**Artifact:** ``gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter24h.tar.gz``.
+
+**Live validation:**
+- W&B run ``7rrjupc7``:
+  https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7.
+- Step 5000/5000 reached; final loss 5.3558
+  (text 10.3176, audio 4.3240).
+- Training completed in 615.9 min and exited status 0.
+- No NaN, OOM, RESOURCE_EXHAUSTED, fatal, traceback, bus-error, or
+  kernel-panic signals were found.
+- Final canonical checkpoint uploaded to
+  ``gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/``.
+- GCS lists 8 objects / 2.37 GiB:
+  ``metadata.json``, ``text_embed.pt``, ``depth_decoder.pt``,
+  ``projection.pt``, ``audio_heads.pt``, and PEFT adapter files.
+- XLA compiled only at startup: 18 compilation causes total, 12 before
+  visible step 1 and 6 around steps 1-2; no late recompiles through
+  step 5000.
+
+**Workstation validation:** simultaneous-translation validators pass:
+``ruff format --check src/ scripts/``, ``ruff check src/ scripts/``,
+byte-compile all tracked Python files, parse all YAML configs, and
+``bash -n`` TPU shell scripts + launcher.
+
+**Follow-up:** move optimizer-state/warmup compilation before the
+visible ``step 1`` line so step 1 is steady-state. This is a cleanup
+only; it did not affect correctness of iter 24h.
+
+### 2026-05-09: Iter 24g -- fix step-259 NaN by freezing XLA data + mask topology
+
+**Decision (SUPERSEDED by iter 24h; TPU preempted before launch):**
+Iter 24g targeted the real step-259 graph change discovered by 24f, not
+the downstream symptom. Exa/XLA docs confirm that recompilation happens
+when input shapes or value-dependent Python branches change; the HF
+SDPA helper also calls ``torch.all(attention_mask == 1)`` and may elide
+the 4D mask for all-full batches. That creates a different attention
+graph on XLA and can expose the same v6e bf16 reduce-scatter NaN.
+
+**Patch pattern:**
+1. TPU ``DataLoader(drop_last=True)`` so tail batches cannot change the
+   SPMD batch dimension.
+2. Static TPU shape assertions before tensors move to XLA:
+   ``text/mask/loss == [batch_size, max_frames]`` and
+   ``audio == [batch_size, num_codebooks, max_frames]``.
+3. Clamp HF attention masks to ``>= -1e4`` as before, and additionally
+   disable SDPA mask elision by making
+   ``AttentionMaskConverter._ignore_causal_mask_sdpa`` always return
+   ``False``. This keeps all-full and padded batches on the same 4D-mask
+   graph.
+4. Keep conservative ``batch_size=8, grad_accum=4`` from iter 24f until
+   the run passes step 300; only then consider restoring b=16/g=2.
+
+**Artifact:** ``gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter24g.tar.gz``.
+
+**Blocker:** QR/node ``tinyaya-stage2-spot-v6e8-eu`` was terminal
+``PREEMPTED`` as of upload time. User approved two recreates. The first
+replacement reached ACTIVE/READY but preempted before iter 24g could
+launch. The second reached compile and created W&B run ``kmvydrq1``,
+then preempted before step 1. Per orchestrator policy, do not
+auto-recreate QR again without user approval.
+
+### 2026-05-09: Iter 24f -- step-259 recompile is the actual root failure (NaN with b=8, OOM with b=16)
+
+**Decision (NEW failure mode discovered):** Iter 24f (b=8, grad_accum=4,
+no barrier, no lever 6 -- "minimal" config) ran 258 steps NaN-free
+(loss 10.36 -> 6.86, ~6s/step) and then **NaN at step 259**. A NEW
+graph compiles at the step-258 -> 259 boundary with massively different
+topology (28.29 GB intermediate tensor, 19-min recompile, hash
+``c6ae6ddabdc8d3dccc5c8ee2d36b03ce``). audio_loss NaN'd first
+(``text=10.35 audio=nan``) -- exact same fingerprint as iter 24a-d.
+
+**Same boundary, two failure modes:**
+- iter 23 / 24e (b=16): the 28 GB graph overflows -> OOM at step 259
+- iter 24f (b=8):  the 28 GB graph fits -> bf16 reduce-scatter NaN
+
+**Implication:** OOM at 258 in iter 23/24e was NOT transient ring-buffer
+growth. There is a real graph-topology change at step 259 that triggers
+both failures. b=8 only delays the symptom, doesn't cure it.
+
+**Hypotheses for the step-259 graph change (untested):**
+1. Dataset boundary -- 258 * 8 * 4 = 8,256 samples; dataset has 9,212
+   pairs; an epoch reset / loader rebucket happens here.
+2. Sequence-length / max_frames variation in this micro-batch.
+3. Warmup -> decay schedule crossover at step 200 (less likely).
+
+**Wandb:** 0x4keilj NaN @ 259.
+
+### 2026-05-09: Iter 24e -- BREAKTHROUGH: barrier helper IS the NaN trigger; OOM at 258 was transient
+
+**Decision (numerics fix, SUPERSEDES iter 24c):** Iter 24e proves
+that the per-layer ``register_full_backward_hook`` calls inside
+``_apply_fsdpv2_backward_barriers`` (added in iter 24) are the SOLE
+NaN trigger. Lever 6 (fused fp32 ``clip_grad_norm``) was actually
+MASKING the NaN, not causing it.
+
+**Bisection table:**
+
+| iter   | Barrier | Lever6 | Per-layer wraps | b  | Result |
+|--------|---------|--------|-----------------|----|--------|
+| 17     | 0       | 0      | 0               | 8  | stable but tiny |
+| 23     | 0       | 0      | 0               | 16 | NaN-free 257 steps, OOM at 258 |
+| 24a/b  | 1       | 1      | 1               | 16 | NaN @ 24 |
+| 24c    | 1       | 1      | 0               | 16 | NaN @ 32 |
+| 24d    | 1       | **0**  | 0               | 16 | **NaN @ 3** (lever 6 was MASKING) |
+| 24e    | **0**   | 0      | 0               | 16 | **PASSED step 258, no NaN, no OOM** |
+
+**Root cause confirmed:** the 42 ``register_full_backward_hook``
+calls force XLA to materialize 42 backward-graph boundaries that
+don't fuse, exposing per-layer bf16 underflow on v6e
+(pytorch/xla #8591). Lever 6's fp32 norm reduction was clearing
+some pending bf16 numerical issues at the global-norm step, hence
+delaying NaN from step 3 (without lever 6) to step 32 (with).
+
+**OOM at step 258 was TRANSIENT** -- iter 24e bypassed it cleanly.
+Possible causes for iter 23's OOM that no longer apply:
+1. Stale TPU state from previous run (preempt + restart cleared)
+2. Slightly different libtpu cache state
+3. Different graph compile path due to barrier hook removal -
+   without the hook, XLA may fuse more aggressively, reducing peak
+   HBM
+4. Lower per-step memory pressure without 42 hook closures
+
+**Production path forward:** keep ``fsdp_barrier_hook: false`` in
+the YAML (default) and ``enable_clip_grad_norm: false`` (matches
+iter 23 stable). If OOM resurfaces at step ~258 in future runs,
+use batch_size=8 (per pytorch/xla #8591 explicit upstream advice)
+rather than re-enabling the barrier hook.
+
+**Code changes preserved:**
+- ``train_hierarchical.py`` line 651: barrier helper guarded by
+  ``cfg["train"].get("fsdp_barrier_hook", False)`` (default False)
+- ``configs/stage2_tpu_v6e_spot.yaml``: both
+  ``enable_clip_grad_norm: false`` and ``fsdp_barrier_hook: false``
+  documented with the bisection rationale
+- ``tpu_backend.py``: ``layer_type_names = ("CohereDecoderLayer",
+  "MoshiDecoderLayer")`` (Cohere2DecoderLayer DROPPED to keep one
+  outer-level FSDPv2 reduce-scatter; matches iter 23 stable)
+
+**Wandb runs:**
+- 24a: ``5ep7z7ab`` (NaN @ 24, flash-on)
+- 24b: ``49kjpp6v`` (NaN @ 24, flash-off)
+- 24c: ``83evwy38`` (NaN @ 32, barrier+lever6, no per-layer)
+- 24d: ``d3hrus4k`` (NaN @ 3, barrier+no-lever6)
+- 24e: ``c0ybrkz4`` (CLEAN through step 258+; iter 23 reproduction)
+
+---
+
+### 2026-05-08: Iter 24c -- v6e bf16 reduce-scatter NaN bug forces barrier-only OOM mitigation (SUPERSEDED by iter 24e)
+
+> **SUPERSEDED 2026-05-09:** iter 24e proved the barrier helper
+> itself is the NaN trigger and that the OOM at step 258 was
+> transient. The per-layer FSDPv2 wrap revert is still kept (it
+> matches iter 23) but the barrier helper is now disabled by
+> default. See iter 24e entry above for the corrected analysis.
 
 **Decision (numerics fix):** Iter 24a/24b BOTH hit a bit-deterministic
 NaN at step 24 (audio_loss first, then both losses) regardless of
@@ -810,8 +987,8 @@ will only see two snapshots (input, output). For training with
 `output_hidden_states=False` this is fine; for inference / probing
 hooks we leave the proxy disabled.
 
-### 2026-05-08: Active canary topology pivots to single-host v6e-8 in europe-west4-a
-**Decision:** The active canary topology pivots from multi-host
+### 2026-05-08: Canary topology pivots to single-host v6e-8 in europe-west4-a
+**Decision:** The canary topology pivots from multi-host
 v4-32 spot in `us-central2-b` to **single-host v6e-8 spot in
 `europe-west4-a`**. The v6e-8 node is `tinyaya-stage2-spot-v6e8-eu`
 (QR `tinyaya-stage2-spot-v6e8-eu-qr`). Single-host means ONE Python
@@ -909,6 +1086,26 @@ explicitly. Do not rely on `which` under sudo on a fresh TPU VM.
 
 ## Milestones (completed)
 
+### 2026-05-10: First 5000-step TPU production run completed (iter 24h)
+
+- **What:** First full Phase 5 Stage 2 production training run to
+  complete on TPU.
+- **Hardware:** single-host TPU v6e-8 spot, europe-west4-a. 1 host x
+  8 chips, 32 GiB HBM/chip, 1 Python process via SPMD.
+- **Run id:** ``7rrjupc7`` (project ``tinyaya-stage2-tpu``), run name
+  ``v6e-spot-stage2-5k-iter24h``.
+- **W&B:** https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7.
+- **Training:** 5000/5000 steps, 615.9 min wall, exit status 0.
+- **Final loss:** 5.3558 (text 10.3176, audio 4.3240).
+- **Steady-state throughput:** ~6.7-7.0 sec/step after startup compile.
+- **Checkpoint:** canonical final save at
+  ``gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/``
+  with 8 objects / 2.37 GiB.
+- **Stability:** no NaN, OOM, RESOURCE_EXHAUSTED, fatal, traceback,
+  bus-error, or kernel-panic signals in the training log.
+- **Compile:** 18 startup-only XLA compilation causes; no late
+  recompiles after steps 1-2 through step 5000.
+
 ### 2026-05-06: First end-to-end TPU canary success (iter 7)
 
 - **What:** First run that reached `step=100` with monotonically
@@ -926,7 +1123,7 @@ explicitly. Do not rely on `which` under sudo on a fresh TPU VM.
 - **Reproduce:** see the architecture-decision entry of the same
   date for the `launch_spot.sh` invocation.
 
-(Next milestone will be the 5000-step run completing.)
+(Next milestone: evaluation metrics from the iter 24h checkpoint.)
 
 ### 2026-05-08: Patch 19 validated -- canonical end-of-training save works on v6e-8
 **Decision:** `save_checkpoint_canonical_final()` in `checkpointing.py` does

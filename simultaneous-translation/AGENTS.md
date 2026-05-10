@@ -22,8 +22,8 @@ uv run python -m py_compile $(git ls-files '*.py')  # quick lint
 ## TPU launch (canonical commands)
 
 ```bash
-# Current canary: v6e-8 spot in europe-west4-a (single-host, 8 chips,
-# ONE Python process, 32 GiB HBM/chip).
+# Current production path: v6e-8 spot in europe-west4-a
+# (single-host, 8 chips, ONE Python process, 32 GiB HBM/chip).
 TRC_PROFILE=v6e-8-eu \
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
@@ -46,7 +46,7 @@ gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu \
 | Value | Behaviour |
 |-------|-----------|
 | `replicated` | Every chip holds a full model copy; only data is sharded. **OOMs the 5.17B model on v5e.** Useful for small models. |
-| `fsdpv2_lora` | Shards layers that contain trainable params (LoRA-bearing CohereDecoderLayer); replicates frozen MoshiDecoderLayer. **Default for canary.** |
+| `fsdpv2_lora` | Shards layers that contain trainable params (LoRA-bearing CohereDecoderLayer); replicates frozen MoshiDecoderLayer. **Default for canary + production.** |
 | `fsdpv2` | Shards every transformer layer including frozen ones. Tightest memory but highest comm cost. |
 | `auto` | Lets the backend pick (currently == `fsdpv2_lora`). |
 
@@ -72,8 +72,9 @@ torch_xla >= 2.6 and silently no-op. Use the explicit
 
 - `configs/stage2_scale.yaml` — full Stage 2 production config.
 - `configs/stage2_tpu.yaml` — TPU full run (5000 steps).
-- `configs/stage2_tpu_canary.yaml` — short canary with reduced
-  `max_frames` (currently 64; restore to 300 once compile is fast).
+- `configs/stage2_tpu_canary.yaml` — historical short canary config.
+- `configs/stage2_tpu_v6e_spot.yaml` — current production v6e-8
+  config validated by iter 24h (5000/5000 steps).
 
 ## Per-chip memory budget
 
@@ -94,13 +95,13 @@ gradient checkpointing.
 Both topologies share a 32 GiB HBM/chip budget, so the same per-chip
 totals apply to v4-32 (4 hosts x 4 chips = 16 chips) and v6e-8
 (1 host x 8 chips). The headroom relative to v5e is roughly 2x: for
-the canary `fsdpv2_lora` strategy, peak per-chip HBM in iter 7 (v4-32)
-and iter 13b (v6e-8 EU) sat under 12 GB out of the 32 GB budget. The
-budget that matters in practice is therefore activation memory
-(5-10 GB) + sharded params + grads + optim state, not HBM ceiling.
-On v6e-8 the lower chip count (8 vs 16) is offset by the absence of
-cross-host all-reduce, so steady-state sec/step is comparable at
-LoRA-only effective batch sizes.
+the `fsdpv2_lora` strategy, peak per-chip HBM in iter 7 (v4-32) and
+iter 13b (v6e-8 EU) sat under 12 GB out of the 32 GB budget. Iter 24h
+then completed 5000/5000 production steps on v6e-8 with effective
+batch 256 (`batch_size=8`, `grad_accum=4`, 8 chips) and ~6.7-7.0
+sec/step after startup compilation. The budget that matters in
+practice is activation memory (5-10 GB) + sharded params + grads +
+optim state, not HBM ceiling.
 
 ## Conventions
 

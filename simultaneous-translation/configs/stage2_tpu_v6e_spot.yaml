@@ -35,37 +35,38 @@ data:
 
 # ---------------------------------------------------------------------
 # Train: single-host v6e-8 spot.
-# Effective batch = batch_size * grad_accum * 8 chips = 16 * 2 * 8 = 256.
+# Effective batch = batch_size * grad_accum * 8 chips = 8 * 4 * 8 = 256.
 # ---------------------------------------------------------------------
 train:
   num_codebooks: 8
-  # iter 18 lever 1: batch_size 8 -> 16 (KEEP xla_grad_checkpoint=true).
-  # Effective batch = 16 * 2 * 8 = 256 (2x iter 17's 128).
-  # Per-chip activations ~10-12 GB with grad_checkpoint halving;
-  # static params + optim ~2.6 GB; XLA scratch ~3 GB -> peak HBM
-  # ~14-16 GB / chip vs measured ceiling 31.246 GiB (~50% util,
-  # ~2x safety). Dropping grad_checkpoint at b=16 would push to
-  # ~22-26 GB (~80%, OOM tail risk) -- deferred to iter 19+.
-  batch_size: 16
-  grad_accum: 2
-  # iter 24c: main 5000-step production run (Phase 13). Combines
-  # iter 21-23 stable bf16 numerics (NO per-layer FSDPv2 wraps on
-  # the Cohere2 backbone) with the iter 24 FSDPv2 backward
-  # optimization barrier (still fires on Cohere2DecoderLayer +
-  # MoshiDecoderLayer via register_full_backward_hook independent of
-  # the wrap policy) for the cache_all_gather OOM. Expected wall
-  # clock: 5000 * ~4.3 s/step = ~6.0 h plus ~25 min compile = ~6.4 h
-  # end-to-end. warmup_steps=200 = 4% of total.
+  # iter 24h keeps iter 24f's conservative micro-batch while closing
+  # every known step-259 graph switch:
+  #   * TPU collator pads the tail batch to batch_size, preserving
+  #     static shape without dropping examples.
+  #   * The training loop never lets a 4-way grad-accum macro-step
+  #     straddle an epoch reset.
+  #   * Static-shape assertions fail fast before a new XLA graph can
+  #     compile.
+  #   * HF SDPA mask elision is disabled so all-full attention masks
+  #     do not switch topology mid-run.
+  # Effective batch remains 8 * 4 * 8 chips = 256.
+  batch_size: 8
+  grad_accum: 4
+  # Main 5000-step production run (Phase 13). warmup_steps=200 =
+  # 4% of total. Runtime is now governed by b=8/grad_accum=4
+  # (~6 s/step after compile in iter 24f).
   max_steps: 5000
   warmup_steps: 200
-  # iter 24: lever 6 (fused clip_grad_norm) re-enabled now that the
-  # underlying OOM is fixed by the per-layer FSDPv2 backward barriers
-  # (see train_hierarchical.py::_apply_fsdpv2_backward_barriers). The
-  # iter 21/22/23 OOM at step 258 was the documented
-  # ``cache_all_gather=True`` ring-buffer accumulation
-  # (openxla/xla #20508 + pytorch/xla #6379 step 5), not lever 6
-  # itself; gating clip is no longer necessary.
-  enable_clip_grad_norm: true
+  # iter 24e: lever 6 stays gated OFF (matching iter 23 known-stable).
+  # iter 24d (barrier ON, lever 6 OFF) NaN'd at step 3 -- proves the
+  # barrier helper is the NaN trigger and lever 6 was actually
+  # MASKING the NaN (the fp32 norm reduction kept gradients stable).
+  enable_clip_grad_norm: false
+  # iter 24e: barrier hook gated by config. Default false.
+  # The barrier was meant to mitigate cache_all_gather OOM at step 258
+  # but produced NaN on v6e (pytorch/xla #8591 bf16 reduce-scatter).
+  # OOM mitigation will instead come via batch_size=8 in iter 24f.
+  fsdp_barrier_hook: false
   depth_chunk_size: 16
   # iter 14: bf16 with attention-mask monkey-patch (train_hierarchical.py
   # _patch_attention_mask_for_bf16 clamps mask values >= -1e4 to avoid
@@ -120,14 +121,7 @@ logging:
   keep_last_n: 5
   use_wandb: true
   wandb_project: tinyaya-stage2-tpu
-  # iter 24c: drop per-layer FSDPv2 wraps (iter 24a/24b's class-name
-  # fix in tpu_backend.py is reverted) to escape the v6e bf16
-  # reduce-scatter NaN bug (pytorch/xla #8591/#8778). Keep the
-  # backward optimization barrier on Cohere2DecoderLayer +
-  # MoshiDecoderLayer directly via register_full_backward_hook -- it
-  # works regardless of FSDPv2 wrapping and still mitigates the iter
-  # 21/22/23 cache_all_gather step-258 OOM. Combines iter 21-23
-  # stable bf16 numerics + barrier-only OOM mitigation. Fresh wandb
-  # run id so the UI clearly separates this from 24a (NaN, flash-on)
-  # and 24b (NaN, flash-off).
-  wandb_run_name: v6e-spot-stage2-5k-iter24c
+  # iter 24h: macro-batch static fix. Holds b=8/grad_accum=4 from
+  # iter 24f while padding the DataLoader tail and keeping epoch reset
+  # outside the XLA-traced grad-accum graph.
+  wandb_run_name: v6e-spot-stage2-5k-iter24h

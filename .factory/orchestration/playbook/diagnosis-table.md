@@ -15,7 +15,7 @@ Match priority: top-to-bottom. First regex hit wins.
 | 6 | TPU duty=0% AND HBM>50% AND wall>30 min AND no `step=` | Compile hung / executor stuck | Kill, dump `met.metrics_report()`, add `python -u`, ensure `XLA_PERSISTENT_CACHE_PATH` is unset | T2 | NCCL #112518 |
 | 7 | `gcloud ssh.*Connection refused` | VM SSH unreachable | ESCALATE -- do not auto-recreate QR | T3 | GCP Spot docs |
 | 8 | `kernel panic` OR `Bus error` in tmux log | VM-level corruption | ESCALATE -- do not auto-recreate QR | T3 | GCP Spot docs |
-| 9 | 4 worker PIDs all unreachable for 3+ consecutive polls | Multi-host VM down | ESCALATE -- do not auto-recreate QR | T3 | GCP Spot docs |
+| 9 | N worker PIDs all unreachable for 3+ consecutive polls (`N=1` on v6e-8, `N=4` on legacy v4-32, `N=8` on v6e-64) | TPU VM(s) down | ESCALATE -- do not auto-recreate QR | T3 | GCP Spot docs |
 | 10 | Same `classification` as previous iteration | Doom loop circuit breaker | ESCALATE | T4 | LangChain self-heal April 2026 |
 | 11 | User selects "Abort+Diag" or "Pause" at check-in | User decision | ESCALATE | T4 | -- |
 | 12 | `compilation_cause_count` rising AND no error AND elapsed < 30 min | Normal compile (sharding distribution) | Recommend "continue" at check-in | T0 | our prior runs + #8612 |

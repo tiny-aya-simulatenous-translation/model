@@ -68,6 +68,7 @@ done
 ```bash
 # secrets check on tracked + new files
 ! grep -rnE '(hf_[a-zA-Z0-9]{20,}|sk-[a-zA-Z0-9]{20,}|gh[ps]_[a-zA-Z0-9]{30,}|AKIA[A-Z0-9]{16})' \
+    --exclude-dir='.venv' --exclude-dir='__pycache__' --exclude-dir='.mypy_cache' \
     --include='*.py' --include='*.sh' --include='*.yaml' --include='*.md' --include='*.json' \
     simultaneous-translation
 ```

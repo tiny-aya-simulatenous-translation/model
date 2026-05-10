@@ -412,9 +412,7 @@ class _FusedScanLayer(nn.Module):
             # retry on every forward call. The HLO produced by the
             # manual-loop fallback is the same regardless, so the
             # XLA persistent cache can warm up uninterrupted.
-            bound_layers = nn.ModuleList(
-                [_KwargBoundLayer(w.layer, args, kwargs) for w in layers]
-            )
+            bound_layers = nn.ModuleList([_KwargBoundLayer(w.layer, args, kwargs) for w in layers])
             try:
                 # PyTorch issue #105485: is_layer_pure=True triggers a
                 # FakeTensorMode trace through aten.index_select, which
@@ -427,12 +425,6 @@ class _FusedScanLayer(nn.Module):
                 print(
                     f"[scan_utils] scan_layers raised "
                     f"{type(err).__name__}: {err!r}; "
-                    "permanently disabling scan for this stack."
-                )
-                self.stack.scan_fn = None
-            except Exception as err:  # pragma: no cover - depends on TPU runtime
-                print(
-                    f"[scan_utils] scan_layers raised {type(err).__name__}: {err!r}; "
                     "permanently disabling scan for this stack."
                 )
                 self.stack.scan_fn = None

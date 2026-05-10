@@ -190,10 +190,16 @@ fi
 
 tmux new-session -d -s "$TMUX_SESSION" "
     set -euo pipefail
+    ulimit -n 1048576
     cd '$REPO_DIR/simultaneous-translation'
     echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
     DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
+    XLA_USE_BF16=0 \
+    XLA_DOWNCAST_BF16=0 \
     XLA_DISABLE_FUNCTIONALIZATION=0 \
+    LIBTPU_INIT_ARGS='--megascale_grpc_enable_xor_tracer=false --xla_tpu_enable_flash_attention=false' \
+    PT_XLA_DEBUG_LEVEL=1 \
+    XLA_PROFILER_PORT=9012 \
     TPU_STRATEGY='$TPU_STRATEGY_META' \
     LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
     HF_TOKEN='$HF_TOKEN' \

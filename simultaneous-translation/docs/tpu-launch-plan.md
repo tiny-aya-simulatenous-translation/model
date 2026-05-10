@@ -1,28 +1,34 @@
 # TPU v4 Launch Plan — Stage 2 TR↔HI
 
-## 2026-05-08 update
+## 2026-05-10 update
 
 The historical narrative below assumes TPU v4-64 / v4-32 in
-`us-central2-b` as the launch target. The active canary topology has
-since pivoted to **single-host TPU v6e-8 spot in `europe-west4-a`**
+`us-central2-b` as the launch target. The validated production
+topology has since pivoted to **single-host TPU v6e-8 spot in
+`europe-west4-a`**
 (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
 `tinyaya-stage2-spot-v6e8-eu`, config
 `configs/stage2_tpu_v6e_spot.yaml`, profile shorthand
 `v6e-8-eu`). On v6e-8 there is exactly one host with 8 chips and
 ONE Python process driving them via SPMD -- no multi-host
-coordination required. v4-32 spot is now SUSPENDED (no v4 spot
-capacity in `us-central2-b`) and v6e-64 in `europe-west4-a` is the
-next multi-host scale-up target. **Sections below referring to a
-v4-64 4-host topology, the v4-32 spot fallback, or
-`us-central2-b`-specific behaviour are historical** and preserved
+coordination required. Iter 24h completed the first 5000-step
+production run on this topology: W&B run
+[`7rrjupc7`](https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7),
+5000/5000 steps in 615.9 min, final loss 5.3558, exit status 0, and
+canonical checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+(8 objects, 2.37 GiB). v4-32 spot is legacy and v6e-64 in
+`europe-west4-a` is the next multi-host scale-up target. **Sections
+below referring to a v4-64 4-host topology, the v4-32 spot fallback,
+or `us-central2-b`-specific behaviour are historical** and preserved
 for the planning context that produced the launch infrastructure.
 
-**Status:** Approved 2026-05-03 (historical); active canary now on
-v6e-8 EU as of 2026-05-08.
+**Status:** Approved 2026-05-03 (historical); production validated on
+v6e-8 EU as of 2026-05-10.
 **Branch:** `feat/tpu-support`
 **Owner:** Mayank Bhaskar ([@cataluna84](https://github.com/cataluna84), mayankbhaskar007@gmail.com)
 **Hardware:** Google Cloud TPU v4-64 (32 chips), donated by TRC
-(historical baseline; current canary runs on v6e-8 EU).
+(historical baseline; current production path runs on v6e-8 EU).
 
 This document captures the proposal that produced the launch infrastructure
 under `simultaneous-translation/scripts/tpu/`, the `pyproject.toml` /

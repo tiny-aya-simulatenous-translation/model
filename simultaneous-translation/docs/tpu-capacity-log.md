@@ -1,16 +1,16 @@
 # TPU capacity log -- observed queue times + autonomous fallback policy
 
-## 2026-05-08 update
+## 2026-05-10 update
 
-Active canary topology has pivoted to **single-host v6e-8 spot in
+Production topology has pivoted to **single-host v6e-8 spot in
 `europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
-`tinyaya-stage2-spot-v6e8-eu`, profile shorthand `v6e-8-eu`). v4-32
-spot in `us-central2-b` is currently SUSPENDED -- the v4 spot pool
-in that zone has been reclaimed by other TRC users for several
-hours straight. The fallback policy in section 1 below is preserved
-verbatim as the canonical autonomous decision tree, but day-to-day
-operation now starts at the v6e-8 EU profile while v4 spot is
-unavailable.
+`tinyaya-stage2-spot-v6e8-eu`, profile shorthand `v6e-8-eu`). Iter
+24h completed 5000/5000 production steps on this profile and uploaded
+the final canonical checkpoint. v4-32 spot in `us-central2-b` is now
+legacy. The fallback policy in section 1 below is preserved as the
+canonical autonomous decision tree for new capacity attempts, but
+day-to-day operation starts at the v6e-8 EU profile unless the user
+explicitly asks for another topology.
 
 **Purpose:** Record real queue-wait durations so future sessions can
 make smart autonomous decisions about which TRC slice to try. Updated
@@ -79,7 +79,8 @@ queued, it should follow this decision tree:
 | 2026-05-05 | 13:02 | v6e-64 spot (us-east1-d) | spot | 5 min PROVISIONING | FAILED | Code 13 "an internal error has occurred" -- same failure pattern as v5e-64 ew4b (PROVISIONING -> SUSPENDING -> FAILED in <5 min). 8-host slice + 8 IP cap = identical IP quota gate. |
 | 2026-05-05 | 13:42 | v4-32 spot (us-central2-b) | spot | 3.5 min PROVISIONING | ACTIVE | Retry of the 09:23 attempt with same config + same QR submission. Spot pool cleared in the intervening hours; ACTIVE reached at 13:51 UTC. First successful canary launch of the day. |
 | 2026-05-08 | -- | v4-32 spot (us-central2-b) | spot | hours | SUSPENDED | v4 spot pool reclaimed by other TRC users; QR has been SUSPENDED for several hours with no recovery. Pivoted away. |
-| 2026-05-08 | -- | v6e-8 spot (europe-west4-a) | spot | ~4:44 | ACTIVE | **Current canary topology.** Single-host (8 chips), 32 GiB HBM/chip. ACTIVE within 5 min from QR submission. Iter 13b (run `zd42n7di`) reached 20 steps + canonical save in 23.3 min wall. |
+| 2026-05-08 | -- | v6e-8 spot (europe-west4-a) | spot | ~4:44 | ACTIVE | Single-host (8 chips), 32 GiB HBM/chip. ACTIVE within 5 min from QR submission. Iter 13b (run `zd42n7di`) reached 20 steps + canonical save in 23.3 min wall. |
+| 2026-05-09 | 15:25 | v6e-8 spot (europe-west4-a) | spot | ~3 min to ACTIVE | ACTIVE / COMPLETED | Iter 24h production retry. QR reached ACTIVE at 15:28 UTC; run `7rrjupc7` completed 5000/5000 steps at 2026-05-10T01:47:24Z and uploaded `step_005000_final` (8 objects, 2.37 GiB). |
 
 *(Update this table after every attempt.)*
 

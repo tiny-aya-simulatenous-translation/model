@@ -3,17 +3,21 @@
 Operator-side scripts for training Stage 2 on Google Cloud TPU TRC
 hardware via the Queued Resource API.
 
-## 2026-05-08 update
+## 2026-05-10 update
 
-The active canary topology is **single-host TPU v6e-8 spot in
+The validated production topology is **single-host TPU v6e-8 spot in
 `europe-west4-a`** (QR `tinyaya-stage2-spot-v6e8-eu-qr`, node
 `tinyaya-stage2-spot-v6e8-eu`, profile shorthand `v6e-8-eu`,
 config `configs/stage2_tpu_v6e_spot.yaml`). On v6e-8 there
 is one host with 8 chips and ONE Python process driving them via
-SPMD. v4-32 spot in `us-central2-b` (4 hosts) is currently
-SUSPENDED and treated as a Legacy path (see "Legacy v4 examples"
-below). The runbook below has been updated to start with the v6e-8
-EU example.
+SPMD. Iter 24h completed 5000/5000 steps on this path:
+W&B run [`7rrjupc7`](https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7),
+final loss 5.3558, training wall 615.9 min, exit status 0, final
+checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+(8 objects, 2.37 GiB). v4-32 spot in `us-central2-b` (4 hosts) is
+legacy (see "Legacy v4 examples" below). The runbook below starts
+with the v6e-8 EU production example.
 
 For the design rationale and decision history, see
 [`../../docs/tpu-launch-plan.md`](../../docs/tpu-launch-plan.md).
@@ -61,7 +65,7 @@ prefixing the command with `VAR=value bash ...`.
 `setup_gcp.sh`; from then on, VMs fetch them from Secret Manager at boot
 and the `.env` is no longer needed by the cloud side.
 
-## End-to-end runbook (v6e-8 EU spot canary)
+## End-to-end runbook (v6e-8 EU spot production)
 
 From the repo root, on your local workstation:
 
@@ -83,8 +87,8 @@ gcloud auth application-default login
 # 3. seed GCP (bucket, secrets, IAM)
 bash simultaneous-translation/scripts/tpu/setup_gcp.sh
 
-# 4. CANARY: launch single-host v6e-8 spot in europe-west4-a
-#    (canonical command for the active topology)
+# 4. launch single-host v6e-8 spot in europe-west4-a
+#    (canonical command for the validated production topology)
 TRC_PROFILE=v6e-8-eu \
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
@@ -93,7 +97,7 @@ TPU_STRATEGY=fsdpv2_lora \
 PROBE_FIRST=1 \
   bash simultaneous-translation/scripts/tpu/launch_spot.sh
 
-# 5. observe canary
+# 5. observe run
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
 ZONE=europe-west4-a \
@@ -103,7 +107,7 @@ NODE_ID=tinyaya-stage2-spot-v6e8-eu \
 ZONE=europe-west4-a \
   bash simultaneous-translation/scripts/tpu/ops.sh tail-logs
 
-# 6. canary teardown when validation is complete
+# 6. teardown when validation/checkpoint review is complete
 QR_NAME=tinyaya-stage2-spot-v6e8-eu-qr \
 NODE_ID=tinyaya-stage2-spot-v6e8-eu \
 ZONE=europe-west4-a \
@@ -161,20 +165,24 @@ git commit -m "feat: TPU v4-64 launch infra (uv + py3.12.13 + torch_xla 2.9 + ca
 git push origin feat/tpu-support
 ```
 
-## Canary success criteria
+## Production success criteria
 
-Before running step 7 (full launch), confirm all 7 are green from the canary:
+For the v6e-8 production path, confirm all 8 are green before deleting
+the QR or promoting the checkpoint downstream:
 
 1. QR transitions `WAITING_FOR_RESOURCES → ACTIVE` within ~10 min
-2. `tpu-info` on at least one host reports 4 chips
-3. `train.log` shows step counters incrementing on **all 4 hosts**
-4. At least one checkpoint lands in `gs://$BUCKET/$CANARY_CKPT_PREFIX/`
-5. At least one validation pass logs to W&B
-6. `train.log` shows clean exit at step 200 (not OOM, not assertion error)
-7. `auto_wrap_policy` matched ≥1 layer (no "wrapping 0 modules" warning)
+2. `tpu-info` on worker 0 reports 8 chips
+3. W&B run URL is announced and matches `v6e-spot-stage2-5k-*`
+4. `/tmp/train.log` reaches step 300 without NaN/OOM/FATAL signals
+5. `/tmp/train.log` reaches step 5000/5000
+6. `training exited with status 0`
+7. Canonical final save uploads to
+   `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+8. GCS lists the final checkpoint files (`metadata.json`,
+   `text_embed.pt`, `depth_decoder.pt`, `projection.pt`,
+   `audio_heads.pt`, and `peft_adapter/*`)
 
-If any criterion fails, diagnose, patch, and re-run the canary before
-proceeding to the full run.
+Iter 24h satisfied all 8 criteria.
 
 ## Troubleshooting
 

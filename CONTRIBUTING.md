@@ -448,7 +448,7 @@ Working on the TPU path? A few extra rules:
 Please include:
 
 - **Environment**: workstation / TPU profile (e.g.
-  `v6e-8 spot europe-west4-a` for the current canary, or legacy
+  `v6e-8 spot europe-west4-a` for the current production path, or legacy
   `v4-32 spot us-central2-b`), Python version, `torch_xla`
   version, `wandb` version. State the worker count explicitly
   (1 worker on v6e-8 single-host, 4 on v4-32).

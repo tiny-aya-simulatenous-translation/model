@@ -26,6 +26,369 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-10T02:49:54Z | feat/tpu-support@cbdff89 | done | verify
+Repository verification passed after iter 24h documentation and checkpoint-status updates.
+
+Details:
+- `.factory/VERIFY.md`: all 19 fenced bash blocks passed.
+- TPU sharding probes were skipped because `PJRT_DEVICE` is unset on
+  the workstation, as intended.
+- Focused simultaneous-translation ruff validators passed:
+  `ruff format --check src/ scripts/` and `ruff check src/ scripts/`.
+- Verification fixes included excluding `.venv` from the secrets grep
+  and lazily importing the Phase 3 `PipelineConfig` so
+  `python3 cli.py --help` works even when optional pipeline modules are
+  unavailable.
+
+## 2026-05-10T02:41:43Z | feat/tpu-support@cbdff89 | done | exec
+Iter 24h completed the first 5000-step v6e-8 production run and uploaded the final canonical checkpoint.
+
+Details:
+- W&B run: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7
+  (`v6e-spot-stage2-5k-iter24h`).
+- Training reached step 5000/5000 and exited with status 0 at
+  2026-05-10T01:47:24Z after 615.9 min.
+- Final step line:
+  `loss 5.3558 | text 10.3176 audio 4.3240 | 6.96s/step`.
+- No NaN, OOM, RESOURCE_EXHAUSTED, fatal, traceback, bus-error, or
+  kernel-panic signals were found in `/tmp/train.log`.
+- Canonical final save completed and uploaded to
+  `gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`.
+- GCS listing shows 8 objects / 2.37 GiB:
+  `metadata.json`, `text_embed.pt`, `depth_decoder.pt`,
+  `projection.pt`, `audio_heads.pt`, and PEFT adapter files.
+- XLA compilation was startup-only: 18 compilation causes total, 12
+  before visible step 1 and 6 around steps 1-2; no late recompiles
+  through step 5000.
+
+## 2026-05-09T15:21:21Z | feat/tpu-support@cbdff89 | done | edit
+Iter 24h closes the remaining step-259 grad-accum epoch-boundary graph gap and uploads a fresh tarball.
+
+Details:
+- Exa/XLA evidence reinforced that HLO changes on input-shape or
+  value-dependent branch changes; PyTorch/XLA #8616 also highlights that
+  gradient accumulation wants a fixed [GA, batch, ...] topology.
+- Added TPU host-side batch-axis padding in InterleavedCollator
+  (`batch_pad_to`, `expected_num_codebooks`).
+- Changed TPU DataLoader back to drop_last=False; tail rows are padded
+  with zero attention/loss masks instead of dropped.
+- Added macro-step guard so epoch reset happens only between optimizer
+  steps, never inside a 4-way grad-accum graph.
+- Kept iter24g SDPA mask-elision disable.
+- Uploaded gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter24h.tar.gz.
+- Validators passed for simultaneous-translation: ruff format/check,
+  py_compile all tracked Python, YAML parse, bash -n TPU scripts +
+  launcher.
+
+## 2026-05-09T11:32:55Z | feat/tpu-support@cbdff89 | block | exec
+Second user-approved v6e-8 retry preempted during iter24g compile; no step was reached.
+
+Details:
+- Patched startup_script.sh to include the same stable TPU env as the
+  manual launcher (flash disabled, PT_XLA_DEBUG_LEVEL=1) and ulimit
+  1048576, then refreshed the iter24g tarball in GCS.
+- Recreated v6e-8 spot QR again; startup completed and manual launcher
+  started iter24g.
+- W&B run was created:
+  https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/kmvydrq1
+- Runtime reached compile (`Graph Hash: 6be815b64f...`) with 0 NaN/OOM
+  signals and no loss lines yet.
+- TPU was preempted during first compile; QR=SUSPENDED/SERVICE and
+  node=PREEMPTED. No iter24g training step reached.
+
+## 2026-05-09T10:45:58Z | feat/tpu-support@cbdff89 | block | exec
+Approved v6e-8 QR recreate succeeded, but the replacement spot TPU preempted before iter 24g could launch.
+
+Details:
+- Deleted stale preempted QR/node and recreated
+  tinyaya-stage2-spot-v6e8-eu-qr with iter24g tarball metadata.
+- QR reached ACTIVE/READY, then startup failed once because the tarball
+  omitted root README.md required by hatchling.
+- Rebuilt and re-uploaded iter24g tarball including README.md.
+- Before manual redeploy could complete, node returned to PREEMPTED and
+  QR to SUSPENDED (SERVICE).
+- No iter24g W&B run was created; no training step ran on the replacement.
+
+## 2026-05-09T10:11:57Z | feat/tpu-support@cbdff89 | block | exec
+Iter 24g patch + tarball are ready, but the v6e-8 TPU node is terminal PREEMPTED.
+
+Details:
+- Exa/XLA evidence points to a step-259 graph-topology change from dynamic
+  batch/mask branches.
+- Patched train_hierarchical.py to use TPU drop_last=True, static-shape
+  assertions, and disabled HF SDPA attention-mask elision.
+- Updated stage2_tpu_v6e_spot.yaml and launcher to iter24g.
+- Uploaded gs://tinyaya-stage2-tpu/code/tinyaya-repo-iter24g.tar.gz.
+- Focused validators passed: py_compile, YAML parse, bash -n, ruff format
+  check, ruff check.
+- tpu-watchdog verdict=crashed: node tinyaya-stage2-spot-v6e8-eu is
+  PREEMPTED and cannot be used; do not auto-recreate QR without approval.
+
+## 2026-05-09T03:16:14Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:16:14Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:13:31Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:13:26Z | feat/tpu-support@cbdff89 | info | session
+PreCompact (auto): 28 unchecked PLAN items
+
+Top open items:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+- Decide between `fsdpv2_lora` and `fsdpv2` based on:
+- Document the decision in `memories.md` under "TPU strategy
+
+
+## 2026-05-09T03:12:44Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:11:50Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:11:50Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:11:18Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:11:18Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:06:04Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T03:06:04Z | feat/tpu-support@cbdff89 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-09T02:26:14Z | feat/tpu-support@cbdff89 | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- >= 200 successful steps (canary `max_steps=200`); checkpoint
+- Patches 12 + 13 either landed and verified, or proven
+- All commands in `VERIFY.md` (monorepo + simultaneous-translation
+- 5000-step run completes (canary -> full config); final loss
+- `eval_stage2.py` ASR-BLEU + DNSMOS recorded against
+- Verify activation memory is under 4 GB per chip via `diagnose()`.
+- If still tight, try moving frozen `MoshiDecoderLayer` to bf16
+- Re-run `probe_strategies.py` against the real model with
+
+
+## 2026-05-09T02:26:14Z | feat/tpu-support@cbdff89 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-09T02:00:30Z | feat/tpu-support@cbdff89 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # CLI entry point loads and prints help
+    ModuleNotFoundError: No module named 'src.config'
+
+
+## 2026-05-09T01:50:32Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T01:50:27Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T01:50:21Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T01:50:11Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T01:50:05Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`
+
+
+## 2026-05-09T01:50:00Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`
+
+
+## 2026-05-09T01:35:47Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
+
+
+## 2026-05-09T00:49:47Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-09T00:49:08Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T00:49:04Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T00:48:59Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T00:48:51Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T00:48:32Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-09T00:48:24Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`
+
+
+## 2026-05-09T00:48:07Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`
+
+
+## 2026-05-09T00:48:01Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-08T19:04:01Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T19:03:56Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T19:03:51Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T19:03:33Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/_artifacts/launch_train_v6e_v2.sh`
+
+
+## 2026-05-08T19:02:44Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`
+
+
+## 2026-05-08T19:01:18Z | feat/tpu-support@cbdff89 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot.yaml`
+
+
 ## 2026-05-08T18:16:48Z | feat/tpu-support@0edb0c8 | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
 

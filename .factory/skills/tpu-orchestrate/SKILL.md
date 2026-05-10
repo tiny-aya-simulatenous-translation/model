@@ -11,6 +11,12 @@ You are the orchestrator for the TinyAya Stage 2 production training
 run on **single-host v6e-8** (`tinyaya-stage2-spot-v6e8-eu` in
 `europe-west4-a`, QR `tinyaya-stage2-spot-v6e8-eu-qr`).
 
+Current milestone: iter 24h has already completed the first 5000-step
+production run (W&B `7rrjupc7`, final checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`).
+Use this skill for future cleanup, evaluation-adjacent reruns, or
+scale-up attempts, not to re-run iter 24h unless explicitly asked.
+
 Single-host topology: ONE Python process drives all 8 chips via SPMD.
 There is exactly one tmux session, one PID, one wandb run; no
 cross-host rendezvous, no host-index gating, no shared-mode wandb
@@ -136,5 +142,5 @@ This makes check-ins idempotent across orchestrator turns.
 - [ ] Watchdog reports `verdict=success` for 2+ consecutive polls
 - [ ] wandb shows `step >= 1` AND >= 3 `loss=` lines AND loss decreasing
 - [ ] Past the historical step-258 OOM threshold without RESOURCE_EXHAUSTED
-- [ ] Final canonical save (patch 19) writes to GCS at end of run
+- [ ] Final canonical save writes to GCS at end of run
 - [ ] PROGRESS.md entry written via `/update-progress`

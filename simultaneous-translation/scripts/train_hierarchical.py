@@ -46,6 +46,7 @@ import sys
 import time
 from pathlib import Path
 
+# ruff: noqa: E402,I001
 import soundfile as sf
 import torch
 import yaml
@@ -67,6 +68,8 @@ def _patch_attention_mask_for_bf16() -> None:
         from transformers.modeling_attn_mask_utils import AttentionMaskConverter
     except ImportError:
         return
+
+    import transformers.modeling_attn_mask_utils as _mask_utils
 
     original_to_4d = AttentionMaskConverter.to_4d
     original_make_causal = AttentionMaskConverter._make_causal_mask
@@ -90,9 +93,37 @@ def _patch_attention_mask_for_bf16() -> None:
         )
         return out.clamp(min=SAFE_MIN)
 
+    @staticmethod
+    def patched_ignore_causal_mask_sdpa(
+        attention_mask,
+        inputs_embeds,
+        past_key_values_length,
+        sliding_window=None,
+        is_training=False,
+    ):
+        # TPU note: HF's default implementation calls
+        # `torch.all(attention_mask == 1)` and elides the 4D SDPA mask
+        # for all-full batches. On XLA that value-dependent branch can
+        # split the graph mid-run; keep one mask topology for every
+        # batch instead.
+        return False
+
+    def patched_prepare_4d_attention_mask_for_sdpa(mask, dtype, tgt_len=None):
+        return AttentionMaskConverter._expand_mask(mask=mask, dtype=dtype, tgt_len=tgt_len).clamp(
+            min=SAFE_MIN
+        )
+
     AttentionMaskConverter.to_4d = patched_to_4d
     AttentionMaskConverter._make_causal_mask = patched_make_causal
-    print("[bf16-mask-patch] AttentionMaskConverter patched (clamp >= -1e4)", flush=True)
+    if hasattr(AttentionMaskConverter, "_ignore_causal_mask_sdpa"):
+        AttentionMaskConverter._ignore_causal_mask_sdpa = patched_ignore_causal_mask_sdpa
+    if hasattr(_mask_utils, "_prepare_4d_attention_mask_for_sdpa"):
+        _mask_utils._prepare_4d_attention_mask_for_sdpa = patched_prepare_4d_attention_mask_for_sdpa
+    print(
+        "[bf16-mask-patch] AttentionMaskConverter patched "
+        "(clamp >= -1e4; SDPA mask elision disabled)",
+        flush=True,
+    )
 
 
 _patch_attention_mask_for_bf16()
@@ -639,15 +670,21 @@ def main():
     if cfg.get("backend", "auto") != "tpu":
         model.backbone.gradient_checkpointing_enable()
     model = backend.wrap_model(model)
-    # iter 24: install per-layer backward optimization barriers so XLA
-    # frees the cached all-gather outputs before each layer's backward
-    # begins. Without this hook, ``cache_all_gather=True`` (defaulted in
-    # the SPMD partitioner; openxla/xla #20508) retains ring buffers
-    # forward-to-backward and deterministically OOMs around step 258 on
-    # v6e-8. See the docstring of ``_apply_fsdpv2_backward_barriers`` and
-    # ``.factory/memories.md`` 2026-05-08 iter 24 entry for the full
-    # rationale + upstream references (pytorch/xla #6379 step 5).
-    if cfg.get("backend", "auto") == "tpu":
+    # iter 24e: barrier helper DISABLED. Bisection evidence:
+    #   iter 24d (barrier ON, lever 6 OFF, b=16) -> NaN at step 3
+    #   iter 24c (barrier ON, lever 6 ON,  b=16) -> NaN at step 32
+    #   iter 23  (barrier OFF, lever 6 OFF, b=16) -> NaN-free 257 steps,
+    #                                                OOM at step 258
+    # The barrier helper is the proven NaN trigger -- the 42
+    # register_full_backward_hook calls force XLA to materialize 42
+    # backward-graph boundaries that don't fuse, exposing per-layer
+    # bf16 underflow on v6e (pytorch/xla #8591). Lever 6 (fp32 norm
+    # reduction) was MASKING the NaN, not causing it.
+    # We accept the iter 23 OOM at step 258 here; mitigation in 24f
+    # via batch_size=8 (per #8591 explicit upstream advice) or via
+    # checkpoint-and-resume.
+    barrier_enabled = bool(cfg.get("train", {}).get("fsdp_barrier_hook", False))
+    if cfg.get("backend", "auto") == "tpu" and barrier_enabled:
         _apply_fsdpv2_backward_barriers(model)
     if hasattr(backend, "diagnose"):
         backend.diagnose("post-wrap")
@@ -669,8 +706,19 @@ def main():
     # https://docs.pytorch.org/xla/master/perf/recompilation.html). On
     # GPU/CPU dynamic shapes are fine, so we only force fixed padding
     # when the backend is TPU.
-    pad_to = cfg["data"].get("max_frames") if cfg.get("backend", "auto") == "tpu" else None
-    collator = InterleavedCollator(pad_to=pad_to)
+    is_tpu_cfg = cfg.get("backend", "auto") == "tpu"
+    pad_to = cfg["data"].get("max_frames") if is_tpu_cfg else None
+    # iter 24h: also pad the batch axis on TPU. `drop_last=True` alone
+    # left 1035 micro-batches at b=8, so step 259 crossed the epoch
+    # boundary inside a 4-way grad-accum graph. Padded tails keep the
+    # shape static and avoid throwing away real examples.
+    batch_pad_to = cfg["train"]["batch_size"] if is_tpu_cfg else None
+    expected_codebooks = num_codebooks if is_tpu_cfg else None
+    collator = InterleavedCollator(
+        pad_to=pad_to,
+        batch_pad_to=batch_pad_to,
+        expected_num_codebooks=expected_codebooks,
+    )
     if args.dataset_mode == "streaming":
         if not cfg["data"]["train_split"]:
             raise ValueError("train_split required in streaming mode")
@@ -712,6 +760,10 @@ def main():
         train_sampler = None
         val_sampler = None
 
+    # TPU/XLA needs the batch dimension to stay static. The collator
+    # pads the tail batch to `batch_size`, so keep drop_last=False and
+    # preserve the full epoch.
+    train_drop_last = False
     train_loader = torch.utils.data.DataLoader(
         train_ds,
         batch_size=cfg["train"]["batch_size"],
@@ -721,7 +773,15 @@ def main():
         num_workers=num_workers,
         pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
         persistent_workers=num_workers > 0 and not is_tpu,
+        drop_last=train_drop_last,
     )
+    if is_main:
+        print(
+            "[data] "
+            f"train_rows={len(train_ds)} train_batches={len(train_loader)} "
+            f"drop_last={train_drop_last} pad_to={pad_to} batch_pad_to={batch_pad_to}",
+            flush=True,
+        )
     val_loader = None
     if val_ds is not None:
         val_loader = torch.utils.data.DataLoader(
@@ -798,7 +858,7 @@ def main():
         if is_tpu and not is_main:
             # Worker host: wait for primary to publish run-id, then attach.
             run_id = None
-            for attempt in range(60):
+            for _attempt in range(60):
                 try:
                     import subprocess as _sp
 
@@ -852,7 +912,8 @@ def main():
             if is_tpu:
                 run_id = wandb.run.id
                 try:
-                    import subprocess as _sp, tempfile as _tf
+                    import subprocess as _sp
+                    import tempfile as _tf
 
                     with _tf.NamedTemporaryFile("w", suffix=".id", delete=False) as f:
                         f.write(run_id)
@@ -890,6 +951,19 @@ def main():
     best_val = float("inf")
 
     grad_accum = cfg["train"]["grad_accum"]
+    # XLA traces all grad-accum micro-batches into one macro-step graph.
+    # Never let one macro-step straddle an epoch reset: that host-side
+    # branch was the remaining step-259 topology risk after iter 24g.
+    micro_batches_per_epoch = len(train_loader)
+    usable_micro_batches_per_epoch = (
+        (micro_batches_per_epoch // grad_accum) * grad_accum if is_tpu else micro_batches_per_epoch
+    )
+    micro_batches_seen_this_epoch = 0
+    if is_tpu and usable_micro_batches_per_epoch == 0:
+        raise RuntimeError(
+            f"TPU train_loader has only {micro_batches_per_epoch} micro-batches, "
+            f"less than grad_accum={grad_accum}"
+        )
     step = start_step
     max_steps = cfg["train"]["max_steps"]
     log_every = cfg["logging"]["log_every"]
@@ -938,6 +1012,10 @@ def main():
     # xp.start_server(9012) at startup still works and is kept.
 
     while step < max_steps:
+        if is_tpu and micro_batches_seen_this_epoch + grad_accum > usable_micro_batches_per_epoch:
+            data_iter = iter(train_loader)
+            micro_batches_seen_this_epoch = 0
+
         # grad accumulation micro-steps
         if is_tpu:
             micro_loss_sum_xla = torch.tensor(0.0, device=device)
@@ -959,10 +1037,43 @@ def main():
                     if train_sampler is not None:
                         train_sampler.set_epoch(step)
                     data_iter = iter(train_loader)
+                    micro_batches_seen_this_epoch = 0
                     batch = next(data_iter)
+                if is_tpu:
+                    micro_batches_seen_this_epoch += 1
+
+                batch_audio = batch["audio_codes"]
+                if is_tpu:
+                    expected_batch = cfg["train"]["batch_size"]
+                    expected_2d = (expected_batch, max_frames)
+                    expected_audio = (expected_batch, num_codebooks, max_frames)
+                    if batch_audio.shape[1] < num_codebooks:
+                        raise RuntimeError(
+                            f"TPU batch has {batch_audio.shape[1]} codebooks; "
+                            f"expected at least {num_codebooks}"
+                        )
+                    if batch_audio.shape[1] != num_codebooks:
+                        batch_audio = batch_audio[:, :num_codebooks, :].contiguous()
+                    actual = {
+                        "text_ids": tuple(batch["text_ids"].shape),
+                        "audio_codes": tuple(batch_audio.shape),
+                        "attention_mask": tuple(batch["attention_mask"].shape),
+                        "loss_mask": tuple(batch["loss_mask"].shape),
+                    }
+                    if (
+                        actual["text_ids"] != expected_2d
+                        or actual["audio_codes"] != expected_audio
+                        or actual["attention_mask"] != expected_2d
+                        or actual["loss_mask"] != expected_2d
+                    ):
+                        raise RuntimeError(
+                            "TPU static-shape invariant violated: "
+                            f"expected text/mask/loss={expected_2d}, "
+                            f"audio={expected_audio}; got {actual}"
+                        )
 
                 text_ids = batch["text_ids"].to(device)
-                all_codes = batch["audio_codes"].to(device)
+                all_codes = batch_audio.to(device)
                 cb0 = all_codes[:, 0, :]
                 mask = batch["attention_mask"].to(device)
                 loss_mask = batch["loss_mask"].to(device)

@@ -8,7 +8,7 @@ the loop.
 ## Snapshot format (each AskUser body)
 
 ```
-== TPU canary status @ T+<elapsed> min ==
+== TPU production/canary status @ T+<elapsed> min ==
 
 wandb:
   state           = <running|crashed|finished>
@@ -34,7 +34,7 @@ watchdog verdict: <compiling|stalled|crashed|progressing|success>
 ## The 4 options (AskUser format)
 
 ```
-1. [question] TPU canary check-in @ T+<elapsed> min. Continue, abort,
+1. [question] TPU check-in @ T+<elapsed> min. Continue, abort,
    adjust, or pause?
    [topic] Checkin-action
    [option] Continue (schedule next checkin at T+<next>)

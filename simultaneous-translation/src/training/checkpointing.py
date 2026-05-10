@@ -233,9 +233,10 @@ def save_checkpoint_canonical_final(
     is_gcs = save_dir.startswith("gs://") or save_dir.startswith("gs:/")
     if is_gcs:
         import tempfile
+
         local_dir = tempfile.mkdtemp(prefix="canonical_final_")
         if save_dir.startswith("gs:/") and not save_dir.startswith("gs://"):
-            gcs_dest = "gs://" + save_dir[len("gs:/"):]
+            gcs_dest = "gs://" + save_dir[len("gs:/") :]
         else:
             gcs_dest = save_dir
         write_dir = local_dir
@@ -261,6 +262,7 @@ def save_checkpoint_canonical_final(
 
     if is_gcs:
         import subprocess
+
         print(
             f"[patch 19] uploading {write_dir}/* to {gcs_dest}",
             flush=True,
@@ -272,14 +274,13 @@ def save_checkpoint_canonical_final(
         )
         if result.returncode != 0:
             print(f"[patch 19] gsutil stderr: {result.stderr}", flush=True)
-            raise RuntimeError(
-                f"gsutil upload failed (rc={result.returncode}): {result.stderr}"
-            )
+            raise RuntimeError(f"gsutil upload failed (rc={result.returncode}): {result.stderr}")
         print(
             f"[patch 19] gsutil upload complete: {gcs_dest}",
             flush=True,
         )
         import shutil
+
         shutil.rmtree(write_dir, ignore_errors=True)
 
 

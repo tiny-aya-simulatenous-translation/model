@@ -1,25 +1,36 @@
 # TPU Support: Complete Guide to All Changes
 
-## 2026-05-08 update
+## 2026-05-10 update
 
 The launch-time and infrastructure narrative below was written when
 this branch first landed (Colab v5e-1, then v4-32 spot canary in
-`us-central2-b`). The active canary has since pivoted to **single-
-host TPU v6e-8 in `europe-west4-a`** (QR
+`us-central2-b`). The production path has since pivoted to
+**single-host TPU v6e-8 in `europe-west4-a`** (QR
 `tinyaya-stage2-spot-v6e8-eu-qr`, config
 `configs/stage2_tpu_v6e_spot.yaml`). On v6e-8 there is exactly
 ONE Python process (single-host SPMD) driving all 8 chips, so the
 multi-host coordination patches (host-index gating, wandb shared-
 mode rendezvous, GCS run-id polling) are inert; they remain in the
-codebase to support v4-32 (legacy) and v6e-64 (future scale-up). All
-sections below referring to "4 hosts", multi-host wandb, or v4-32
-zones should be read as historical / multi-host topology context.
+codebase to support v4-32 (legacy) and v6e-64 (future scale-up).
+
+**Current production result:** iter 24h completed 5000/5000 steps
+on v6e-8 EU spot, W&B run
+[`7rrjupc7`](https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/7rrjupc7),
+final loss 5.3558, training wall 615.9 min, exit status 0. The final
+canonical checkpoint uploaded to
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot/step_005000_final/`
+(8 objects, 2.37 GiB). No NaN/OOM/fatal signals were found. All
+sections below referring to "4 hosts", multi-host wandb, v4-32 zones,
+or canary-only status should be read as historical / multi-host
+topology context.
 
 **Branch:** `feat/tpu-support`
 **Base repo:** `tinyaya-stage2-scale/simultaneous-translation`
 **Verified on:** Colab TPU v5e-1 (forward + backward pass confirmed),
 v4-32 spot in `us-central2-b` (iter 7 reached step 100), v6e-8 spot
-in `europe-west4-a` (iter 13b reached step 20 + canonical save).
+in `europe-west4-a` (iter 13b reached step 20 + canonical save, iter
+17 reached 200-step bf16 canary, iter 24h completed 5000-step
+production).
 
 ---
 
@@ -28,8 +39,15 @@ in `europe-west4-a` (iter 13b reached step 20 + canonical save).
 The training pipeline was originally built for GPU with optional DDP (multi-GPU) support. We added TPU support using PyTorch/XLA's SPMD + FSDPv2 while keeping the GPU path intact. The approach is a **backend abstraction** -- the training script doesn't know whether it's running on GPU or TPU; it talks to a backend interface that handles device-specific operations.
 
 **What changed:**
-- 5 new files (backend module + TPU config)
-- 3 modified files (training script + 2 model files + checkpointing)
+- TPU backend abstraction with SPMD/FSDPv2 strategy selection.
+- TPU launch infrastructure (`launch_qr.sh`, `launch_spot.sh`,
+  `startup_script.sh`, `ops.sh`, hot redeploy).
+- XLA-safe training-loop changes: static shapes, lazy tensor logging,
+  TPU-specific optimizer stepping, and fixed grad-accum topology.
+- v6e-specific numerics fixes: bf16 attention-mask clamp, disabled
+  SDPA mask elision, conservative b=8/grad_accum=4 production config.
+- Canonical final checkpoint save for FSDPv2-XLA plus GCS upload.
+- External-memory and orchestration docs for self-healing TPU runs.
 
 **What did NOT change:**
 - Model architecture (backbone, composite, depth decoder, LoRA setup)
@@ -37,6 +55,21 @@ The training pipeline was originally built for GPU with optional DDP (multi-GPU)
 - Loss computation (translation_loss.py)
 - Learning rate scheduler (scheduler.py)
 - Inference scripts
+
+**Production-specific fixes validated by iter 24h:**
+- TPU batches are padded on the host to a static batch dimension
+  (`batch_pad_to=batch_size`) while keeping `drop_last=False`, so no
+  accepted training row is discarded.
+- The training loop tracks micro-batches per epoch and resets the
+  DataLoader only between optimizer steps; a 4-way grad-accum macro-step
+  never straddles an epoch boundary.
+- Static TPU shape assertions fail fast before a new XLA graph can
+  compile.
+- HF SDPA mask elision is disabled and attention masks are clamped to
+  `>= -1e4`, preventing both all-full-batch topology flips and the v6e
+  bf16 `-inf` mask NaN.
+- Canonical final save stages to a local directory and uploads with
+  `gsutil cp -r` when the target is `gs://...`.
 
 ---
 

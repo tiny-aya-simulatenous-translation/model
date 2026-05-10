@@ -30,14 +30,14 @@ Match priority: top-to-bottom. First regex hit wins.
 | # | Symptom (regex) | Classification | Patches | Tier |
 |---|---|---|---|---|
 | 1 | `Failed to deserialize executable: UNIMPLEMENTED` | `xla-cache` | `[{"file": "scripts/tpu/startup_script.sh", "kind": "remove-env", "details": "Remove XLA_PERSISTENT_CACHE_PATH"}, {"file": "scripts/tpu/_remote_redeploy.sh", "kind": "remove-env", "details": "Remove XLA_PERSISTENT_CACHE_PATH"}]` | T2 |
-| 2 | `ValueError.*Layer \d+ has mismatched keys` | `scan-structure` | `[{"file": "configs/stage2_tpu_canary*.yaml", "kind": "edit-yaml", "details": "use_scan_layers: false"}]` | T2 |
+| 2 | `ValueError.*Layer \d+ has mismatched keys` | `scan-structure` | `[{"file": "configs/stage2_tpu*.yaml", "kind": "edit-yaml", "details": "use_scan_layers: false"}]` | T2 |
 | 3 | `AssertionError.*FakeTensor.*aten\.index_select` | `fakeTensor` | `[{"file": "src/model/scan_utils.py", "kind": "drop-flag", "details": "Drop is_layer_pure=True"}]` | T2 |
 | 4 | `TypeError.*unexpected keyword.*attention_mask` | `kwarg-bind` | `[]` (already fixed by KwargBoundLayer) | T0 |
-| 5 | `RESOURCE_EXHAUSTED` OR `OOM` OR `exit code 137` | `oom` | `[{"file": "configs/stage2_tpu_canary*.yaml", "kind": "halve-batch", "details": "batch_size //= 2 OR depth_chunk_size //= 2"}]` | T2 |
+| 5 | `RESOURCE_EXHAUSTED` OR `OOM` OR `exit code 137` | `oom` | `[{"file": "configs/stage2_tpu*.yaml", "kind": "halve-batch", "details": "batch_size //= 2 OR depth_chunk_size //= 2"}]` | T2 |
 | 6 | TPU duty=0 + HBM>50 + elapsed>30 + no `step=` | `compile-stall` | `[{"file": "scripts/tpu/startup_script.sh", "kind": "ensure", "details": "python -u + remove XLA_PERSISTENT_CACHE_PATH + dump met.metrics_report"}]` | T2 |
 | 7 | `Connection refused` from gcloud ssh | `t3-corruption` | `[]` (escalate; never auto-recreate QR) | T3 |
 | 8 | `kernel panic` OR `Bus error` | `t3-corruption` | `[]` (escalate; never auto-recreate QR) | T3 |
-| 9 | All 4 worker PIDs dead 3+ consecutive polls | `t3-corruption` | `[]` (escalate; never auto-recreate QR) | T3 |
+| 9 | All worker PIDs dead 3+ consecutive polls (`N=1` on v6e-8, `N=4` on legacy v4-32, `N=8` on v6e-64) | `t3-corruption` | `[]` (escalate; never auto-recreate QR) | T3 |
 | 10 | Same `classification` as previous iteration | `repeat` | `[]` (circuit breaker) | T4 |
 | 11 | Compilation count rising, no error, elapsed < 30 | `compile-normal` | `[]` (recommend continue) | T0 |
 | 12 | Compilation count rising, no error, elapsed > 60 | `compile-runaway` | `[{"file": "scripts/tpu/startup_script.sh", "kind": "add-env", "details": "XLA_IR_DEBUG=1 next iteration"}]` | T2 |
@@ -67,7 +67,7 @@ Return a SINGLE JSON object (no extra text, no markdown):
 1. Read the watchdog JSON from the prompt.
 2. Run the regexes (in table order) against `tmux_log_tail_50`.
 3. If `iteration > 1` AND `classification == previous_classification`, override to row 10 (`repeat` / T4).
-4. If multi-host PID-dead pattern matches, prefer row 9 over row 6 (PID-dead is a stronger signal).
+4. If topology-aware PID-dead pattern matches, prefer row 9 over row 6 (PID-dead is a stronger signal).
 5. Compute `confidence` from regex match strength (1.0 if exact, 0.5 if partial).
 6. Set `should_retry=false` for tiers T3 and T4; `true` for T0-T2.
 7. Emit the JSON.
