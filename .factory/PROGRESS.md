@@ -26,6 +26,74 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-10T16:01:17Z | feat/tpu-support@6ca66fa | done | verify
+Repository verification passed after retry preemption record.
+
+.factory/VERIFY.md: all 20 fenced bash blocks passed; TPU probes skipped on workstation because PJRT_DEVICE is unset.
+
+
+## 2026-05-10T16:00:39Z | feat/tpu-support@6ca66fa | block | exec
+opt-1-log10-1k retry QR was preempted before training could restart.
+
+After user-approved QR recreate, queued resource returned SUSPENDED (stateInitiator=SERVICE) and TPU state PREEMPTED.
+Health description: maintenance event at 2026-05-10T14:39:33.116372627Z.
+No new W&B run was detected for the retry. tpu-diagnoser classified this as T3 external spot preemption/maintenance, not code failure; another recreate requires explicit approval.
+
+
+## 2026-05-10T16:00:23Z | feat/tpu-support@6ca66fa | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-10T16:00:23Z | feat/tpu-support@6ca66fa | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-10T15:58:30Z | feat/tpu-support@6ca66fa | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-10T11:49:56Z | feat/tpu-support@6ca66fa | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-10T11:19:09Z | feat/tpu-support@6ca66fa | done | exec
+Recreated v6e-8 spot QR for opt-1-log10-1k retry.
+
+User explicitly approved QR recreate after service preemption.
+QR: tinyaya-stage2-spot-v6e8-eu-qr; node: tinyaya-stage2-spot-v6e8-eu; zone: europe-west4-a; accelerator: v6e-8 spot.
+Config: configs/stage2_tpu_v6e_spot_opt_log10_1k.yaml; repo tarball: gs://tinyaya-stage2-tpu/code/tinyaya-repo-log10-1k-retry.tar.gz.
+
+
 ## 2026-05-10T10:36:07Z | feat/tpu-support@65600a6 | done | verify
 Repository verification passed after opt-1-log10-1k preemption record.
 
