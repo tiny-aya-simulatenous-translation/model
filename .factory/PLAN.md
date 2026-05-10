@@ -33,7 +33,7 @@ preserving stability, checkpoint safety, and evaluation quality.
   experiment matrix, perf schema, and diagrams.
 - [x] Skills, droids, hooks, memories, and VERIFY reference the unified
   control plane consistently.
-- [ ] Phase 0 baseline metrics from iter 24h are captured in the
+- [x] Phase 0 baseline metrics from iter 24h are captured in the
   optimization record.
 - [ ] At least one low-risk optimization candidate passes a 300-step TPU
   gate without NaN/OOM/late-recompile.
@@ -49,12 +49,12 @@ preserving stability, checkpoint safety, and evaluation quality.
 
 ### Phase 0 — Measurement harness and baseline
 
-- [ ] Extract iter 24h baseline metrics: compile duration, p50/p90/p99
+- [x] Extract iter 24h baseline metrics: compile duration, p50/p90/p99
   step time, examples/sec, frame-tokens/sec, HBM peak, compile-cause
   count, and matched-step loss.
-- [ ] Add opt-in perf metrics and XProf labels without changing default
+- [x] Add opt-in perf metrics and XProf labels without changing default
   training behavior.
-- [ ] Record the baseline in `PROGRESS.md`; add a `memories.md` entry only
+- [x] Record the baseline in `PROGRESS.md`; add a `memories.md` entry only
   if a durable decision is made.
 
 ### Phase 1 — Low-risk sync/logging optimization

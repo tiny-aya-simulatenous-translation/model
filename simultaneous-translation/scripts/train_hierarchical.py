@@ -289,7 +289,41 @@ DEFAULTS = {
         "push_to_hub": False,
         "hub_repo_id": None,
     },
+    "perf": {
+        "enabled": False,
+        "warmup_skip_steps": 50,
+        "xprof_trace_labels": False,
+    },
 }
+
+
+def _percentile(values: list[float], q: float) -> float | None:
+    """Return a percentile from an in-memory scalar window.
+
+    Args:
+        values: Finite scalar values already materialized on host.
+        q: Percentile as a 0-1 fraction.
+
+    Returns:
+        The interpolated percentile, or ``None`` when ``values`` is
+        empty.
+
+    Notes:
+        TPU note: callers append only host-side wall-clock values that
+        were already computed at a logging boundary. This helper never
+        touches XLA tensors, so enabling perf summaries does not add a
+        hidden device sync.
+    """
+    if not values:
+        return None
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    pos = (len(ordered) - 1) * q
+    lo = int(pos)
+    hi = min(lo + 1, len(ordered) - 1)
+    frac = pos - lo
+    return ordered[lo] * (1.0 - frac) + ordered[hi] * frac
 
 
 def _deep_update(d, u):
@@ -972,6 +1006,27 @@ def main():
     val_every = cfg["logging"]["val_every"]
     text_w = cfg["loss"]["text_weight"]
     audio_w = cfg["loss"]["audio_weight"]
+    perf_cfg = cfg.get("perf", {})
+    perf_enabled = bool(perf_cfg.get("enabled", False))
+    perf_warmup_skip_steps = int(perf_cfg.get("warmup_skip_steps", 50))
+    perf_step_times: list[float] = []
+    effective_batch = cfg["train"]["batch_size"] * grad_accum * max(1, backend.world_size())
+    frame_tokens_per_step = effective_batch * max_frames
+
+    xprof_trace = None
+    if is_tpu and bool(perf_cfg.get("xprof_trace_labels", False)):
+        try:
+            import torch_xla.debug.profiler as xp
+
+            xprof_trace = xp.Trace
+        except Exception as e:
+            if is_main:
+                print(f"[perf] xprof trace labels disabled: {e}", flush=True)
+
+    def trace_ctx(name: str):
+        # GPU analogue: torch.profiler.record_function. On TPU this only
+        # emits labels when an external XProf capture is active.
+        return xprof_trace(name) if xprof_trace else contextlib.nullcontext()
 
     if is_main:
         print(
@@ -1031,14 +1086,15 @@ def main():
                 contextlib.nullcontext() if micro == grad_accum - 1 else backend.no_sync(model)
             )
             with sync_ctx:
-                try:
-                    batch = next(data_iter)
-                except StopIteration:
-                    if train_sampler is not None:
-                        train_sampler.set_epoch(step)
-                    data_iter = iter(train_loader)
-                    micro_batches_seen_this_epoch = 0
-                    batch = next(data_iter)
+                with trace_ctx("data_fetch"):
+                    try:
+                        batch = next(data_iter)
+                    except StopIteration:
+                        if train_sampler is not None:
+                            train_sampler.set_epoch(step)
+                        data_iter = iter(train_loader)
+                        micro_batches_seen_this_epoch = 0
+                        batch = next(data_iter)
                 if is_tpu:
                     micro_batches_seen_this_epoch += 1
 
@@ -1072,41 +1128,44 @@ def main():
                             f"audio={expected_audio}; got {actual}"
                         )
 
-                text_ids = batch["text_ids"].to(device)
-                all_codes = batch_audio.to(device)
-                cb0 = all_codes[:, 0, :]
-                mask = batch["attention_mask"].to(device)
-                loss_mask = batch["loss_mask"].to(device)
+                with trace_ctx("device_transfer"):
+                    text_ids = batch["text_ids"].to(device)
+                    all_codes = batch_audio.to(device)
+                    cb0 = all_codes[:, 0, :]
+                    mask = batch["attention_mask"].to(device)
+                    loss_mask = batch["loss_mask"].to(device)
 
-                # Mark input sharding for TPU SPMD
-                if hasattr(backend, "mark_sharding"):
-                    backend.mark_sharding(text_ids, ("fsdp", None))
-                    backend.mark_sharding(all_codes, ("fsdp", None, None))
-                    backend.mark_sharding(mask, ("fsdp", None))
-                    backend.mark_sharding(loss_mask, ("fsdp", None))
+                    # Mark input sharding for TPU SPMD.
+                    if hasattr(backend, "mark_sharding"):
+                        backend.mark_sharding(text_ids, ("fsdp", None))
+                        backend.mark_sharding(all_codes, ("fsdp", None, None))
+                        backend.mark_sharding(mask, ("fsdp", None))
+                        backend.mark_sharding(loss_mask, ("fsdp", None))
 
-                with backend.autocast_context(dtype=torch.bfloat16):
-                    output = model(
-                        text_ids=text_ids,
-                        audio_codes=cb0,
-                        attention_mask=mask,
-                        full_audio_codes=all_codes[:, :num_codebooks, :],
-                        depth_chunk_size=depth_chunk,
-                    )
-                    text_logits, audio_logits, _ = output
-                    audio_targets = all_codes[:, :num_codebooks, :]
-                    losses = compute_hierarchical_translation_loss(
-                        text_logits,
-                        audio_logits,
-                        text_ids,
-                        audio_targets,
-                        mask,
-                        loss_mask,
-                        text_weight=text_w,
-                        audio_weight=audio_w,
-                    )
+                with trace_ctx("forward_loss"):
+                    with backend.autocast_context(dtype=torch.bfloat16):
+                        output = model(
+                            text_ids=text_ids,
+                            audio_codes=cb0,
+                            attention_mask=mask,
+                            full_audio_codes=all_codes[:, :num_codebooks, :],
+                            depth_chunk_size=depth_chunk,
+                        )
+                        text_logits, audio_logits, _ = output
+                        audio_targets = all_codes[:, :num_codebooks, :]
+                        losses = compute_hierarchical_translation_loss(
+                            text_logits,
+                            audio_logits,
+                            text_ids,
+                            audio_targets,
+                            mask,
+                            loss_mask,
+                            text_weight=text_w,
+                            audio_weight=audio_w,
+                        )
                 loss = losses["loss"] / grad_accum
-                loss.backward()
+                with trace_ctx("backward"):
+                    loss.backward()
             if is_tpu:
                 micro_loss_sum_xla = micro_loss_sum_xla + losses["loss"].detach()
                 micro_text_xla = micro_text_xla + losses["text_loss"].detach()
@@ -1170,10 +1229,12 @@ def main():
                     if p.grad is None:
                         p.grad = torch.zeros_like(p)
                     p.grad.mul_(clip_coef)
-                _xm.mark_step()
+                with trace_ctx("mark_step"):
+                    _xm.mark_step()
                 grad_norm = total_norm
             else:
-                _xm.mark_step()
+                with trace_ctx("mark_step"):
+                    _xm.mark_step()
                 grad_norm = torch.tensor(0.0)
         else:
             grad_norm = torch.nn.utils.clip_grad_norm_(
@@ -1183,12 +1244,13 @@ def main():
                 print(f"!!! Non-finite loss at step {step}. Aborting.")
                 sys.exit(2)
 
-        backend.optimizer_step(optimizer)
-        scheduler.step(step + 1)
-        # iter 22: keep grads allocated as zero (see top-of-loop
-        # comment) so the next step's lever 6 clip sees the same
-        # parameter set as this one.
-        optimizer.zero_grad(set_to_none=False)
+        with trace_ctx("optimizer_step"):
+            backend.optimizer_step(optimizer)
+            scheduler.step(step + 1)
+            # iter 22: keep grads allocated as zero (see top-of-loop
+            # comment) so the next step's lever 6 clip sees the same
+            # parameter set as this one.
+            optimizer.zero_grad(set_to_none=False)
         step += 1
         if step in (1, 2, 5, 10, 25, 50):
             if hasattr(backend, "diagnose"):
@@ -1208,21 +1270,47 @@ def main():
         if step % log_every == 0:
             if is_tpu:
                 # Single materialisation of all losses at log boundary.
-                _xm.mark_step()
-                avg = {
-                    "loss": (running_xla["loss"] / log_every).item(),
-                    "text": (running_xla["text"] / log_every).item(),
-                    "audio": (running_xla["audio"] / log_every).item(),
-                    "per_cb": [0.0] * num_codebooks,
-                }
+                with trace_ctx("logging_materialize"):
+                    _xm.mark_step()
+                    avg = {
+                        "loss": (running_xla["loss"] / log_every).item(),
+                        "text": (running_xla["text"] / log_every).item(),
+                        "audio": (running_xla["audio"] / log_every).item(),
+                        "per_cb": [0.0] * num_codebooks,
+                    }
             else:
                 avg = {
                     k: (v / log_every if k != "per_cb" else (v / log_every).tolist())
                     for k, v in running.items()
                 }
             now = time.time()
-            step_time = (now - t_last) / log_every
+            log_interval_sec = now - t_last
+            step_time = log_interval_sec / log_every
             t_last = now
+            perf_log = {}
+            if perf_enabled:
+                if step >= perf_warmup_skip_steps:
+                    perf_step_times.append(step_time)
+                perf_log = {
+                    "perf/effective_batch": effective_batch,
+                    "perf/examples_per_sec": effective_batch / step_time if step_time > 0 else 0,
+                    "perf/frame_tokens_per_sec": (
+                        frame_tokens_per_step / step_time if step_time > 0 else 0
+                    ),
+                    "perf/log_interval_sec": log_interval_sec,
+                }
+                p50 = _percentile(perf_step_times, 0.50)
+                p90 = _percentile(perf_step_times, 0.90)
+                p99 = _percentile(perf_step_times, 0.99)
+                if p50 is not None:
+                    perf_log.update(
+                        {
+                            "perf/p50_step_time": p50,
+                            "perf/p90_step_time": p90,
+                            "perf/p99_step_time": p99,
+                            "perf/steady_window_steps": len(perf_step_times),
+                        }
+                    )
             lrs = {f"train/lr_{g['name']}": g["lr"] for g in optimizer.param_groups if "name" in g}
             mem_info = backend.get_memory_info()
             peak_gb = mem_info["max_allocated_gb"] if mem_info else 0
@@ -1245,6 +1333,7 @@ def main():
                     "perf/step_time": step_time,
                     "mem/peak_gb": peak_gb,
                     "mem/allocated_gb": alloc_gb,
+                    **perf_log,
                     **lrs,
                 }
                 for i, v in enumerate(avg["per_cb"]):

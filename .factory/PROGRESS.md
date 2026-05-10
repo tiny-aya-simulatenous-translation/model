@@ -26,6 +26,14 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-10T03:43:50Z | feat/tpu-support@cd08e96 | done | plan
+Phase 0 baseline captured for iter24h and opt-in perf instrumentation added.
+
+Baseline record: .factory/orchestration/playbook/baseline-iter24h.md
+Metrics: steady >=50 p50=6.7476s p90=6.9801s p99=7.2486s, examples/sec@p50=37.94, frame-tokens/sec@p50=15175.75, effective_batch=256, compile_causes=18 total, late_recompile=0.
+Instrumentation: perf.enabled=false default, optional p50/p90/p99, examples/sec, frame-tokens/sec, effective batch, log interval, and XProf labels.
+
+
 ## 2026-05-10T03:37:00Z | feat/tpu-support@7efcd47 | done | verify
 verify: 12 passed, 0 failed out of 12 on Stop
 

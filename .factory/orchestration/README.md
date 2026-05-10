@@ -45,6 +45,7 @@ The active optimization plan is tracked in
     |-- diagnosis-table.md             # 13-entry symptom -> patch table
     |-- tier-definitions.md            # T0/T1/T2/T3/T4 escalation tiers
     |-- checkin-protocol.md            # 4-option AskUser template
+    |-- baseline-iter24h.md            # Phase 0 W&B/log baseline
     |-- optimization-experiment-matrix.md
     `-- perf-metrics-schema.md
 ```
@@ -75,12 +76,13 @@ Requires `mmdc` (mermaid-cli). Falls back to `npx @mermaid-js/mermaid-cli`.
 
 1. `CONTROL_PLANE.md` (source-of-truth boundaries)
 2. `TPU_OPTIMIZATION_SPEC.md` (active optimization phases)
-3. `playbook/optimization-experiment-matrix.md` (candidate table)
-4. `playbook/perf-metrics-schema.md` (metrics and promotion fields)
-5. `SPEC.md` (self-healing runtime loop)
-6. `diagrams/03-sequence.mmd` (the runtime sequence)
-7. `playbook/diagnosis-table.md` (failure -> patch playbook)
-8. The implementation files in their natural locations
+3. `playbook/baseline-iter24h.md` (protected baseline metrics)
+4. `playbook/optimization-experiment-matrix.md` (candidate table)
+5. `playbook/perf-metrics-schema.md` (metrics and promotion fields)
+6. `SPEC.md` (self-healing runtime loop)
+7. `diagrams/03-sequence.mmd` (the runtime sequence)
+8. `playbook/diagnosis-table.md` (failure -> patch playbook)
+9. The implementation files in their natural locations
 
 ## Versioning
 

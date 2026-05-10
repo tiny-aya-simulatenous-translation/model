@@ -125,3 +125,14 @@ logging:
   # iter 24f while padding the DataLoader tail and keeping epoch reset
   # outside the XLA-traced grad-accum graph.
   wandb_run_name: v6e-spot-stage2-5k-iter24h
+
+# ---------------------------------------------------------------------
+# Perf instrumentation: off by default so iter 24h behavior remains the
+# baseline. Enable during Phase 0 optimization probes to emit host-side
+# throughput summaries and XProf trace labels without touching XLA
+# tensors outside the existing logging materialization boundary.
+# ---------------------------------------------------------------------
+perf:
+  enabled: false
+  warmup_skip_steps: 50
+  xprof_trace_labels: false
