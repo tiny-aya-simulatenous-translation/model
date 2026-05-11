@@ -37,6 +37,23 @@ preserving stability, checkpoint safety, and evaluation quality.
   1000/1000 steps with exit status 0 and final checkpoint upload, but
   throughput regressed versus iter 24h (`p50=6.9605s`, examples/sec
   `37.13`), so promotion to 5000 steps is not automatic.
+- **Diagnostic result:** `opt-1-log10-hot300` completed 300/300 steps
+  via hot redeploy without `PT_XLA_DEBUG_LEVEL=1` and restored the
+  prior Phase 1 throughput envelope (`p50=5.94085s`, examples/sec
+  `42.9489`). Treat the 1000-step startup-path validation as
+  throughput-confounded; run a 1000-step hot-redeploy validation before
+  any 5000-step promotion or final rejection.
+- **Hot validation result:** `opt-1-log10-hot1k` completed 1000/1000
+  steps via hot redeploy with exit status 0 and final checkpoint upload.
+  It restored throughput versus iter24h (`p50=5.92593s`, examples/sec
+  `43.05558`) and is eligible for a user-approved 5000-step production
+  pass.
+- **Phase 2 result:** `opt-2-warmup-r1` completed 300/300 steps with
+  exit status 0. Compile warmup (sampled trainable-weight sentinel)
+  passed cleanly. `p50=5.879s`, `p99=6.158s`, examples/sec `42.55`,
+  loss `6.655`. Compile warmup is throughput-neutral versus hot1k
+  baseline (p50 0.8% faster, p99 2.6% tighter, examples/sec 1.2%
+  slower). The tighter p99 confirms fewer late-recompile outliers.
 
 ## Definition of Done
 
@@ -77,9 +94,9 @@ preserving stability, checkpoint safety, and evaluation quality.
 
 ### Phase 2 — Compile warmup before visible step 1
 
-- [ ] Add opt-in `train.compile_warmup_steps` for TPU.
-- [ ] Implement zero-LR/zero-weight-decay static macro-step warmup.
-- [ ] Verify no weight drift, no late compile after step 1, and matched
+- [x] Add opt-in `train.compile_warmup_steps` for TPU.
+- [x] Implement zero-LR/zero-weight-decay static macro-step warmup.
+- [x] Verify no weight drift, no late compile after step 1, and matched
   300-step loss parity.
 
 ### Phase 3 — Batch/grad-accum sweep at fixed effective batch 256
@@ -124,6 +141,8 @@ preserving stability, checkpoint safety, and evaluation quality.
 ### Phase 8 — Promotion run and evaluation
 
 - [x] Run a 1000-step validation pass for the best candidate.
+- [x] Run a hot-redeploy 1000-step log10 validation without
+  `PT_XLA_DEBUG_LEVEL=1` before any 5000-step promotion.
 - [ ] Run a 5000-step production pass if the 1000-step pass is stable.
 - [ ] Run `eval_stage2.py` and record ASR-BLEU + DNSMOS.
 - [ ] Update `memories.md` with the promoted config or rejection reason.

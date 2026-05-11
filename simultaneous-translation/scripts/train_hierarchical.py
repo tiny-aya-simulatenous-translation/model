@@ -36,6 +36,8 @@ Two new keys plumb the scan_layers / grad-checkpoint feature flags:
   ``scan_utils`` proxy. See PLAN.md Phase 1.
 * ``train.xla_grad_checkpoint`` (bool) -- per-layer
   ``torch.utils.checkpoint``. See PLAN.md Phase 2.
+* ``train.compile_warmup_steps`` (int) -- run zero-LR TPU macro-steps
+  before visible step 1 so the counted loss curve starts after compile.
 """
 
 import argparse
@@ -44,6 +46,7 @@ import json
 import os
 import sys
 import time
+from collections import deque
 from pathlib import Path
 
 # ruff: noqa: E402,I001
@@ -267,6 +270,7 @@ DEFAULTS = {
         # checkpoint shim falls back to a direct call.
         "use_scan_layers": False,
         "xla_grad_checkpoint": False,
+        "compile_warmup_steps": 0,
     },
     "loss": {"text_weight": 0.1, "audio_weight": 1.0},
     "optim": {
@@ -603,6 +607,7 @@ def build_parser():
     p.add_argument("--depth_chunk_size", type=int, default=None)
     p.add_argument("--num_codebooks", type=int, default=None)
     p.add_argument("--warmup_steps", type=int, default=None)
+    p.add_argument("--compile_warmup_steps", type=int, default=None)
     p.add_argument("--num_workers", type=int, default=None)
 
     # logging
@@ -1028,50 +1033,88 @@ def main():
         # emits labels when an external XProf capture is active.
         return xprof_trace(name) if xprof_trace else contextlib.nullcontext()
 
-    if is_main:
-        print(
-            f"\n=== Training: {max_steps} steps, accum={grad_accum}, "
-            f"batch={cfg['train']['batch_size']} ==="
-        )
-    model.train()
-    # iter 22: set_to_none=False keeps every .grad slot allocated as a
-    # zero tensor between optimizer steps, so the lever 6 clip and any
-    # FSDPv2 reduce-scatter sees a stable parameter set on EVERY step.
-    # Default set_to_none=True can leave .grad=None for params that
-    # didn't receive gradient flow this step, and that variance was
-    # the trigger for the iter 21 OOM at step 258.
-    optimizer.zero_grad(set_to_none=False)
+    replay_batches: deque[dict[str, torch.Tensor]] = deque()
 
-    # On TPU/SPMD, calling .item() / .cpu() inside the training loop forces
-    # an XLA materialise-and-transfer that BLOCKS until the entire lazy
-    # graph compiles + executes. With heterogeneous LoRA + full_ft groups
-    # and grad_accum=2, this can take 30-60 minutes per step (see
-    # pytorch/xla #4203, #8020, troubleshooting "_local_scalar_dense
-    # typically indicates CPU context access"). We keep the running
-    # accumulators as XLA tensors and materialise once per log_every.
-    if is_tpu:
-        running_xla = {
-            "loss": torch.tensor(0.0, device=device),
-            "text": torch.tensor(0.0, device=device),
-            "audio": torch.tensor(0.0, device=device),
-        }
+    def next_train_batch(
+        record_for_replay: list[dict[str, torch.Tensor]] | None = None,
+    ) -> dict[str, torch.Tensor]:
+        """Return the next host batch while preserving TPU epoch topology."""
+        nonlocal data_iter, micro_batches_seen_this_epoch
 
-    # iter 19 lever 4 fix: profiler capture must happen from a SEPARATE
-    # process, not from a background thread in the training process.
-    # The in-process auto-capture failed with "Connection refused"
-    # because xp.trace() could not connect to its own xp.start_server
-    # (per pytorch/xla capture_profile.py pattern -- the server is
-    # meant to be queried from an external process). The launcher
-    # script now handles this by SSH'ing back and running
-    # capture_profile.py after the first compile completes (~10 min).
-    # xp.start_server(9012) at startup still works and is kept.
+        from_replay = bool(replay_batches)
+        if from_replay:
+            batch = replay_batches.popleft()
+        else:
+            try:
+                batch = next(data_iter)
+            except StopIteration:
+                if train_sampler is not None:
+                    train_sampler.set_epoch(step)
+                data_iter = iter(train_loader)
+                micro_batches_seen_this_epoch = 0
+                batch = next(data_iter)
+            if record_for_replay is not None:
+                record_for_replay.append(batch)
+        if is_tpu:
+            micro_batches_seen_this_epoch += 1
+        return batch
 
-    while step < max_steps:
-        if is_tpu and micro_batches_seen_this_epoch + grad_accum > usable_micro_batches_per_epoch:
-            data_iter = iter(train_loader)
-            micro_batches_seen_this_epoch = 0
+    def ensure_adamw_state_for_gradients() -> None:
+        """Create AdamW moment tensors before the TPU warmup optimizer graph."""
+        for group in optimizer.param_groups:
+            for p in group["params"]:
+                if p.grad is None:
+                    continue
+                state = optimizer.state[p]
+                if state:
+                    continue
+                state["step"] = torch.zeros((), dtype=torch.float32)
+                state["exp_avg"] = torch.zeros_like(p, memory_format=torch.preserve_format)
+                state["exp_avg_sq"] = torch.zeros_like(p, memory_format=torch.preserve_format)
 
-        # grad accumulation micro-steps
+    def reset_optimizer_state() -> None:
+        """Zero AdamW moments and step counters after compile warmup."""
+        for state in optimizer.state.values():
+            for key, value in state.items():
+                if torch.is_tensor(value):
+                    value.zero_()
+                elif isinstance(value, (int, float)):
+                    state[key] = type(value)(0)
+
+    def trainable_weight_sentinel(
+        max_tensors: int = 8,
+        values_per_tensor: int = 16,
+    ) -> list[float]:
+        """Copy a tiny trainable-parameter sentinel for the warmup drift check."""
+        chunks = []
+        for p in model.parameters():
+            if p.requires_grad:
+                chunks.append(p.detach().flatten()[:values_per_tensor].float())
+                if len(chunks) >= max_tensors:
+                    break
+        if not chunks:
+            return []
+        sentinel = torch.cat(chunks)
+        if is_tpu:
+            import torch_xla.core.xla_model as _xm
+
+            _xm.mark_step()
+        return [float(v) for v in sentinel.cpu().tolist()]
+
+    def run_macro_step(
+        *,
+        advance_scheduler: bool,
+        ensure_optimizer_state: bool = False,
+        record_for_replay: list[dict[str, torch.Tensor]] | None = None,
+    ) -> dict[str, object]:
+        """Run one static grad-accum macro-step and return unlogged metrics.
+
+        Notes:
+            TPU note: compile warmup calls this with zero LR and
+            ``advance_scheduler=False`` so XLA sees the same
+            forward/backward/optimizer graph without advancing visible
+            training state.
+        """
         if is_tpu:
             micro_loss_sum_xla = torch.tensor(0.0, device=device)
             micro_text_xla = torch.tensor(0.0, device=device)
@@ -1087,16 +1130,7 @@ def main():
             )
             with sync_ctx:
                 with trace_ctx("data_fetch"):
-                    try:
-                        batch = next(data_iter)
-                    except StopIteration:
-                        if train_sampler is not None:
-                            train_sampler.set_epoch(step)
-                        data_iter = iter(train_loader)
-                        micro_batches_seen_this_epoch = 0
-                        batch = next(data_iter)
-                if is_tpu:
-                    micro_batches_seen_this_epoch += 1
+                    batch = next_train_batch(record_for_replay)
 
                 batch_audio = batch["audio_codes"]
                 if is_tpu:
@@ -1176,6 +1210,9 @@ def main():
                 micro_audio += losses["audio_loss"].item()
                 micro_per_cb += losses["per_codebook_loss"].detach().cpu()
 
+        if ensure_optimizer_state:
+            ensure_adamw_state_for_gradients()
+
         # macro-step -- gradient clipping.
         # On FSDPv2 SPMD, vanilla torch.nn.utils.clip_grad_norm_
         # deadlocks at the all-reduce barrier with heterogeneous
@@ -1246,29 +1283,160 @@ def main():
 
         with trace_ctx("optimizer_step"):
             backend.optimizer_step(optimizer)
-            scheduler.step(step + 1)
+            if advance_scheduler:
+                scheduler.step(step + 1)
             # iter 22: keep grads allocated as zero (see top-of-loop
             # comment) so the next step's lever 6 clip sees the same
             # parameter set as this one.
             optimizer.zero_grad(set_to_none=False)
+
+        if is_tpu:
+            return {
+                "loss_xla": micro_loss_sum_xla,
+                "text_xla": micro_text_xla,
+                "audio_xla": micro_audio_xla,
+                "grad_norm": grad_norm,
+            }
+        return {
+            "loss": micro_loss_sum,
+            "text": micro_text,
+            "audio": micro_audio,
+            "per_cb": micro_per_cb,
+            "grad_norm": grad_norm,
+        }
+
+    if is_main:
+        print(
+            f"\n=== Training: {max_steps} steps, accum={grad_accum}, "
+            f"batch={cfg['train']['batch_size']} ==="
+        )
+    model.train()
+    # iter 22: set_to_none=False keeps every .grad slot allocated as a
+    # zero tensor between optimizer steps, so the lever 6 clip and any
+    # FSDPv2 reduce-scatter sees a stable parameter set on EVERY step.
+    # Default set_to_none=True can leave .grad=None for params that
+    # didn't receive gradient flow this step, and that variance was
+    # the trigger for the iter 21 OOM at step 258.
+    optimizer.zero_grad(set_to_none=False)
+
+    # On TPU/SPMD, calling .item() / .cpu() inside the training loop forces
+    # an XLA materialise-and-transfer that BLOCKS until the entire lazy
+    # graph compiles + executes. With heterogeneous LoRA + full_ft groups
+    # and grad_accum=2, this can take 30-60 minutes per step (see
+    # pytorch/xla #4203, #8020, troubleshooting "_local_scalar_dense
+    # typically indicates CPU context access"). We keep the running
+    # accumulators as XLA tensors and materialise once per log_every.
+    if is_tpu:
+        running_xla = {
+            "loss": torch.tensor(0.0, device=device),
+            "text": torch.tensor(0.0, device=device),
+            "audio": torch.tensor(0.0, device=device),
+        }
+
+    # iter 19 lever 4 fix: profiler capture must happen from a SEPARATE
+    # process, not from a background thread in the training process.
+    # The in-process auto-capture failed with "Connection refused"
+    # because xp.trace() could not connect to its own xp.start_server
+    # (per pytorch/xla capture_profile.py pattern -- the server is
+    # meant to be queried from an external process). The launcher
+    # script now handles this by SSH'ing back and running
+    # capture_profile.py after the first compile completes (~10 min).
+    # xp.start_server(9012) at startup still works and is kept.
+
+    compile_warmup_steps = int(cfg["train"].get("compile_warmup_steps", 0) or 0)
+    if compile_warmup_steps < 0:
+        raise ValueError("train.compile_warmup_steps must be >= 0")
+    if compile_warmup_steps and start_step > 0:
+        if is_main:
+            print(
+                f"[compile-warmup] skipped because resume start_step={start_step}",
+                flush=True,
+            )
+    elif compile_warmup_steps and not is_tpu:
+        if is_main:
+            print("[compile-warmup] skipped because backend is not TPU", flush=True)
+    elif compile_warmup_steps:
+        if is_main:
+            print(
+                f"\n=== TPU compile warmup: {compile_warmup_steps} zero-LR macro-step(s) ===",
+                flush=True,
+            )
+        warmup_replay: list[dict[str, torch.Tensor]] = []
+        saved_lrs = [group["lr"] for group in optimizer.param_groups]
+        saved_weight_decays = [group.get("weight_decay", 0.0) for group in optimizer.param_groups]
+        sentinel_before = trainable_weight_sentinel()
+        try:
+            for group in optimizer.param_groups:
+                group["lr"] = 0.0
+                group["weight_decay"] = 0.0
+            for _ in range(compile_warmup_steps):
+                if (
+                    is_tpu
+                    and micro_batches_seen_this_epoch + grad_accum > usable_micro_batches_per_epoch
+                ):
+                    data_iter = iter(train_loader)
+                    micro_batches_seen_this_epoch = 0
+                run_macro_step(
+                    advance_scheduler=False,
+                    ensure_optimizer_state=True,
+                    record_for_replay=warmup_replay,
+                )
+        finally:
+            for group, lr, weight_decay in zip(
+                optimizer.param_groups,
+                saved_lrs,
+                saved_weight_decays,
+                strict=True,
+            ):
+                group["lr"] = lr
+                group["weight_decay"] = weight_decay
+        reset_optimizer_state()
+        import torch_xla.core.xla_model as _xm
+
+        _xm.mark_step()
+        optimizer.zero_grad(set_to_none=False)
+        sentinel_after = trainable_weight_sentinel()
+        if sentinel_after != sentinel_before:
+            raise RuntimeError(
+                "TPU compile warmup changed sampled trainable weights: "
+                f"before={sentinel_before[:4]} after={sentinel_after[:4]}"
+            )
+        micro_batches_seen_this_epoch = 0
+        replay_batches.extend(warmup_replay)
+        if is_main:
+            print(
+                "[compile-warmup] complete; optimizer state reset and "
+                f"{len(warmup_replay)} micro-batch(es) queued for visible training",
+                flush=True,
+            )
+
+    while step < max_steps:
+        if is_tpu and micro_batches_seen_this_epoch + grad_accum > usable_micro_batches_per_epoch:
+            data_iter = iter(train_loader)
+            micro_batches_seen_this_epoch = 0
+
+        macro = run_macro_step(advance_scheduler=True)
         step += 1
         if step in (1, 2, 5, 10, 25, 50):
             if hasattr(backend, "diagnose"):
                 backend.diagnose(f"step={step}")
 
+        grad_norm = macro["grad_norm"]
         if is_tpu:
-            running_xla["loss"] = running_xla["loss"] + micro_loss_sum_xla / grad_accum
-            running_xla["text"] = running_xla["text"] + micro_text_xla / grad_accum
-            running_xla["audio"] = running_xla["audio"] + micro_audio_xla / grad_accum
+            running_xla["loss"] = running_xla["loss"] + macro["loss_xla"] / grad_accum
+            running_xla["text"] = running_xla["text"] + macro["text_xla"] / grad_accum
+            running_xla["audio"] = running_xla["audio"] + macro["audio_xla"] / grad_accum
         else:
-            running["loss"] += micro_loss_sum / grad_accum
-            running["text"] += micro_text / grad_accum
-            running["audio"] += micro_audio / grad_accum
-            running["per_cb"] += micro_per_cb / grad_accum
+            running["loss"] += macro["loss"] / grad_accum
+            running["text"] += macro["text"] / grad_accum
+            running["audio"] += macro["audio"] / grad_accum
+            running["per_cb"] += macro["per_cb"] / grad_accum
 
         # ---- logging
         if step % log_every == 0:
             if is_tpu:
+                import torch_xla.core.xla_model as _xm
+
                 # Single materialisation of all losses at log boundary.
                 with trace_ctx("logging_materialize"):
                     _xm.mark_step()

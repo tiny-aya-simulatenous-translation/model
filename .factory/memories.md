@@ -22,6 +22,42 @@
 
 ## Architecture decisions
 
+### 2026-05-11: log_every=10 hot-redeploy validation promoted to production candidate
+
+**Decision:** `log_every=10` is the current Phase 1 production
+candidate, but only when launched through the hot-redeploy path that
+does not export `PT_XLA_DEBUG_LEVEL=1`. The hot-redeploy 1000-step
+validation (`opt-1-log10-hot1k`, W&B `pdhz1f95`) completed 1000/1000
+with p50 `5.92593s`, examples/sec `43.05558`, final loss `6.17039`,
+and final checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-log10-hot1k/step_001000_final/`.
+
+**Gotcha:** The earlier startup-path 1000-step retry (`58k4t99h`)
+completed but regressed to p50 `6.9605s`. A hot-redeploy 300-step
+repeat (`opt-1-log10-hot300`, W&B `c2kq10nn`) restored the original
+300-step throughput envelope, so treat the startup-path result as
+throughput-confounded by fresh-start/debug environment rather than as a
+rejection of `log_every=10`.
+
+### 2026-05-11: compile warmup passes 300-step gate with sampled sentinel
+
+**Decision:** `compile_warmup_steps=1` with a sampled trainable-weight
+sentinel (8 tensors x 16 values each) is the current Phase 2
+candidate. It is throughput-neutral versus the hot-redeploy log10
+baseline (p50 0.8% faster, p99 2.6% tighter, examples/sec 1.2% slower)
+and eliminates the late-recompile outliers that inflate p99 in
+non-warmup runs.
+
+**Gotcha:** The initial full XLA reduction checksum
+(`trainable_weight_checksum`) triggered a false-positive weight-drift
+assertion (delta 0.08 over 2283.73 in bf16). The sampled sentinel
+copies small parameter slices before/after warmup and compares them
+element-wise, avoiding the unstable global sum reduction.
+
+**Follow-up:** Before changing more knobs, ask the user whether to run a
+5000-step production pass for `opt-1-log10-hot1k` or continue to Phase 2
+compile-warmup experiments.
+
 ### 2026-05-10: Unified TPU optimization control plane
 
 **Decision:** `.factory/orchestration/CONTROL_PLANE.md` is now the

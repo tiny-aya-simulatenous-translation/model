@@ -26,6 +26,695 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-11T12:12:19Z | feat/tpu-support@e7b221c | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
+
+
+## 2026-05-11T12:11:25Z | feat/tpu-support@e7b221c | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-11T12:10:54Z | feat/tpu-support@e7b221c | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+## 2026-05-11T12:10:21Z | feat/tpu-support@e7b221c | done | exec
+opt-2-warmup-r1 completed 300/300 steps (exit 0)
+
+Compile warmup (sampled sentinel) passed cleanly.
+p50=5.879s p90=6.030s p99=6.158s examples/sec=42.55 loss=6.655
+Checkpoint: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-warmup-r1/step_000300_final
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/huwkhcze
+Comparison vs opt-1-log10-hot1k: p50 0.8% faster, p99 2.6% tighter, examples/sec 1.2% slower.
+Compile warmup is throughput-neutral; tighter p99 confirms fewer late-recompile outliers.
+
+
+## 2026-05-11T12:05:57Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T12:05:57Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T11:23:38Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T11:23:38Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T10:39:35Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T10:39:34Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T10:29:53Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T10:29:53Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T10:20:10Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T10:20:09Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T10:13:05Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T10:13:05Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T10:09:32Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T10:09:32Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T10:01:24Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T10:01:24Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T09:52:09Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T09:52:08Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T08:34:01Z | feat/tpu-support@e7b221c | done | verify
+Repository verification passed after hot-redeploy log10 validation records.
+
+.factory/VERIFY.md: all 20 fenced bash blocks passed; TPU probes skipped on workstation because PJRT_DEVICE is unset.
+
+
+## 2026-05-11T08:32:23Z | feat/tpu-support@e7b221c | done | exec
+opt-1-log10-hot1k completed the 1000-step hot-redeploy validation gate.
+
+candidate: opt-1-log10-hot1k
+run ID: pdhz1f95 (https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/pdhz1f95)
+config: configs/stage2_tpu_v6e_spot_opt_log10_hot1k.yaml
+run length: 1000/1000 steps; exit status 0; training wall 156.0 min; canonical final save completed at gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-log10-hot1k/step_001000_final
+metrics: p50=5.92593s, p90=5.95391s, p99=6.32155s, examples/sec=43.05558, frame-tokens/sec=17222.23285, steady_window_steps=96
+baseline delta: p50 12.17% faster than iter24h and examples/sec 13.47% higher; p50 14.86% faster than the startup-path 1000-step retry
+loss: final train/loss=6.17039 (text=10.07573, audio=5.16281); loss decreased from step 10 through step 1000
+safety: no NaN/OOM/RESOURCE_EXHAUSTED/traceback observed; no late compile signal; HBM telemetry remains unreliable at 0.0G
+verdict: promotion candidate for a 5000-step production pass, pending explicit user decision.
+
+
+## 2026-05-11T08:25:57Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T08:25:57Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T08:13:08Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T08:13:08Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T08:02:16Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T08:02:16Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T07:51:32Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T07:51:31Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T07:40:39Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T07:40:39Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T07:23:47Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T07:23:47Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T07:15:07Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T07:15:07Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T07:04:31Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T07:04:30Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T06:53:45Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T06:53:45Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T06:42:36Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T06:42:36Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T06:33:41Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T06:33:40Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T06:21:27Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T06:21:27Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T06:07:08Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T06:07:07Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T06:01:28Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T06:01:27Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T05:51:40Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 27 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T05:51:39Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T05:44:24Z | feat/tpu-support@e7b221c | done | exec
+opt-1-log10-hot300 completed the hot-redeploy diagnostic gate.
+
+candidate: opt-1-log10-hot300
+run ID: c2kq10nn (https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/c2kq10nn)
+config: configs/stage2_tpu_v6e_spot_opt_log10_hot300.yaml
+run length: 300/300 steps; exit status 0; training wall 88.4 min; canonical final save completed at gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-log10-hot300/step_000300_final
+metrics: p50=5.94085s, p90=6.09363s, p99=6.24906s, examples/sec=42.9489, frame-tokens/sec=17179.56146, steady_window_steps=26
+loss: final train/loss=6.66931 (text=10.14486, audio=5.65483); loss decreased from step 10 through step 300
+safety: no NaN/OOM/RESOURCE_EXHAUSTED/traceback observed; no late compile signal in the log tail; HBM telemetry remains unreliable at 0.0G
+verdict: stability pass and throughput restored to the prior 300-step log10 envelope; the 1000-step startup-path run is likely confounded by PT_XLA_DEBUG_LEVEL=1/fresh-start overhead, so re-run a 1000-step hot-redeploy validation before any 5000-step promotion.
+
+
+## 2026-05-11T05:42:50Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T05:42:49Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T05:31:09Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T05:31:09Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T05:13:39Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T05:13:39Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T05:00:18Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T05:00:18Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:54:43Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:54:42Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:44:51Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:44:50Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:40:39Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:40:39Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:30:01Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:30:01Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:23:20Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:23:19Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:14:00Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:14:00Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T04:06:59Z | feat/tpu-support@e7b221c | info | session
+SessionEnd (other): 26 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+- Test `batch_size=32`, `grad_accum=1` only if `b=16/g=2` passes with
+
+
+## 2026-05-11T04:06:59Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T03:59:18Z | feat/tpu-support@e7b221c | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
 ## 2026-05-11T03:58:10Z | feat/tpu-support@87b1b9d | done | verify
 Repository verification passed after opt-1-log10-1k completion record.
 

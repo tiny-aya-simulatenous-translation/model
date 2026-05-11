@@ -1,0 +1,137 @@
+# TPU v6e SPOT optimization config: Phase 1 log_every=10 hot-redeploy repeat.
+#
+# WHY THIS EXISTS
+# ---------------
+# This one-off diagnostic repeats the 300-step opt-1-log10 gate via the
+# hot-redeploy path on an already ACTIVE v6e-8 QR. The prior 1000-step
+# retry completed via the fresh startup path, which exports
+# PT_XLA_DEBUG_LEVEL=1; hot_redeploy does not, so this isolates whether
+# debug startup overhead contributed to the throughput regression.
+#
+# v6e has 32 GiB HBM/chip. iter 19/20 measured peak HBM at 22.67 GiB
+# (72.5%) under batch=16 + grad_ckpt + max_frames=400.
+#
+# Usage:
+#   gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu \
+#     --zone=europe-west4-a --worker=0 \
+#     --command='sudo bash /tmp/launch_train_v6e_v2.sh'
+#
+# See also: docs/tpu-trc-allocation.md  (TRC quotas)
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  # iter 18 lever 2: max_frames 300 -> 400. Per-chip token batch
+  # 16 * 400 = 6400 tokens (vs iter 17's 8 * 300 = 2400). Pushes
+  # deeper into the compute-bound regime; activations scale linearly
+  # in seq length, so HBM grows ~33% which is comfortable given
+  # measured ceiling of 31.246 GiB/chip.
+  max_frames: 400
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+# ---------------------------------------------------------------------
+# Train: single-host v6e-8 spot.
+# Effective batch = batch_size * grad_accum * 8 chips = 8 * 4 * 8 = 256.
+# Candidate: opt-1-log10-hot300, 300-step diagnostic repeat.
+# ---------------------------------------------------------------------
+train:
+  num_codebooks: 8
+  # iter 24h keeps iter 24f's conservative micro-batch while closing
+  # every known step-259 graph switch:
+  #   * TPU collator pads the tail batch to batch_size, preserving
+  #     static shape without dropping examples.
+  #   * The training loop never lets a 4-way grad-accum macro-step
+  #     straddle an epoch reset.
+  #   * Static-shape assertions fail fast before a new XLA graph can
+  #     compile.
+  #   * HF SDPA mask elision is disabled so all-full attention masks
+  #     do not switch topology mid-run.
+  # Effective batch remains 8 * 4 * 8 chips = 256.
+  batch_size: 8
+  grad_accum: 4
+  # Phase 1 gate: 300 steps crosses the historical step-259 boundary
+  # while limiting spot runtime for this low-risk logging experiment.
+  max_steps: 300
+  warmup_steps: 200
+  # iter 24e: lever 6 stays gated OFF (matching iter 23 known-stable).
+  # iter 24d (barrier ON, lever 6 OFF) NaN'd at step 3 -- proves the
+  # barrier helper is the NaN trigger and lever 6 was actually
+  # MASKING the NaN (the fp32 norm reduction kept gradients stable).
+  enable_clip_grad_norm: false
+  # iter 24e: barrier hook gated by config. Default false.
+  # The barrier was meant to mitigate cache_all_gather OOM at step 258
+  # but produced NaN on v6e (pytorch/xla #8591 bf16 reduce-scatter).
+  # OOM mitigation will instead come via batch_size=8 in iter 24f.
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  # iter 14: bf16 with attention-mask monkey-patch (train_hierarchical.py
+  # _patch_attention_mask_for_bf16 clamps mask values >= -1e4 to avoid
+  # the pytorch/xla #4152 overflow). Falls back to fp32 if NaN reappears.
+  precision: bfloat16
+
+  # `scan_layers` remains disabled. _ensure_same_structure rejects our
+  # mixed LoRA[0:33] / FullFT[34:35] layer set (pytorch/xla #8612),
+  # is_layer_pure FakeTensor crash, persistent cache deserialize broken
+  # on torch_xla 2.9. Compile is already tractable without it.
+  use_scan_layers: false
+  # iter 16: enable XLA gradient checkpointing on the scan units.
+  # _xla_safe_checkpoint dodges the torch 2.9 + torch_xla 2.9
+  # `_get_device_module("xla")` regression. Cuts activation memory
+  # ~50% at the cost of ~30% backward recompute -- the right tradeoff
+  # when batch=4 multiplies activation pressure 4x but per-chip
+  # 32 GiB HBM is currently <15% utilized.
+  xla_grad_checkpoint: true
+
+  # Patch 19 (HF transformers issue #36004 fix): destructive end-of-
+  # training save. Moves the entire FSDPv2-wrapped model to CPU on all
+  # hosts (SPMD gather), then host-0 calls save_pretrained on the
+  # now-CPU model. Avoids the deadlock that hit iters 9/10/11 inside
+  # PEFT.save_pretrained on the XLA model. Disabled for iter 12 so we
+  # can validate that the loop reaches step 200 first; flip to true
+  # for iter 13 once the loop is healthy. iter 12 completed step 200
+  # with decreasing loss -> now enabling for iter 13 save-bug validation.
+  final_canonical_save: true
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  # Patch 18a: save_every=0 disables the periodic save that deadlocks
+  # all 4 hosts at futex_wait_queue inside PEFT.save_pretrained on
+  # FSDPv2-XLA. The end-of-training canonical save (patch 19) is the
+  # only save attempt; it is gated by train.final_canonical_save.
+  save_every: 0
+  audio_every: 1000
+  val_every: 500
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-log10-hot300
+  keep_last_n: 5
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  # Phase 1 diagnostic repeat: same topology as opt-1-log10, but with
+  # a unique W&B name/save directory so this hot-redeploy result is
+  # separable from earlier 300-step gates.
+  wandb_run_name: v6e-spot-stage2-opt1-log10-hot300
+
+# ---------------------------------------------------------------------
+# Perf instrumentation: enabled for this candidate. XProf labels stay
+# disabled so the first Phase 1 run isolates the logging-cadence change.
+# ---------------------------------------------------------------------
+perf:
+  enabled: true
+  warmup_skip_steps: 50
+  xprof_trace_labels: false
