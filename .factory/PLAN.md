@@ -33,6 +33,10 @@ preserving stability, checkpoint safety, and evaluation quality.
 - **Validation status:** `opt-1-log10-1k` started but was interrupted by
   service-initiated spot TPU preemption/maintenance before completing
   1000 steps; partial metrics stayed healthy.
+- **Validation result:** the same-zone retry `58k4t99h` completed
+  1000/1000 steps with exit status 0 and final checkpoint upload, but
+  throughput regressed versus iter 24h (`p50=6.9605s`, examples/sec
+  `37.13`), so promotion to 5000 steps is not automatic.
 
 ## Definition of Done
 
@@ -45,7 +49,7 @@ preserving stability, checkpoint safety, and evaluation quality.
   optimization record.
 - [x] At least one low-risk optimization candidate passes a 300-step TPU
   gate without NaN/OOM/late-recompile.
-- [ ] Best promoted optimization config completes a 1000-step validation
+- [x] Best promoted optimization config completes a 1000-step validation
   pass.
 - [ ] Best promoted optimization config completes a 5000-step production
   pass or is explicitly rejected with a recorded reason.
@@ -119,7 +123,7 @@ preserving stability, checkpoint safety, and evaluation quality.
 
 ### Phase 8 — Promotion run and evaluation
 
-- [ ] Run a 1000-step validation pass for the best candidate.
+- [x] Run a 1000-step validation pass for the best candidate.
 - [ ] Run a 5000-step production pass if the 1000-step pass is stable.
 - [ ] Run `eval_stage2.py` and record ASR-BLEU + DNSMOS.
 - [ ] Update `memories.md` with the promoted config or rejection reason.

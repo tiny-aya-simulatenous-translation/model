@@ -26,6 +26,140 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-11T03:58:10Z | feat/tpu-support@87b1b9d | done | verify
+Repository verification passed after opt-1-log10-1k completion record.
+
+.factory/VERIFY.md: all 20 fenced bash blocks passed; TPU probes skipped on workstation because PJRT_DEVICE is unset.
+
+
+## 2026-05-11T03:57:34Z | feat/tpu-support@87b1b9d | done | exec
+opt-1-log10-1k completed the 1000-step validation gate.
+
+candidate: opt-1-log10-1k same-zone retry
+run ID: 58k4t99h (https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h)
+run length: 1000 steps; exit status 0; training wall 185.2 min; canonical final save completed at gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-log10-1k/step_001000_final
+metrics: p50=6.9605s, p90=7.0191s, p99=7.6449s, examples/sec=37.13, frame-tokens/sec=14850.22, steady_window_steps=96
+baseline delta: p50 3.16% slower than iter24h, p90 0.56% slower, p99 5.47% slower, examples/sec 2.15% lower
+loss: final train/loss=6.1768 (text=10.0766, audio=5.1691); loss decreased from step 10 through step 1000
+safety: no NaN/OOM/RESOURCE_EXHAUSTED/traceback observed.
+verdict: stability pass, throughput regression; do not auto-promote to 5000-step production without user decision.
+
+
+## 2026-05-11T02:22:32Z | feat/tpu-support@87b1b9d | info | exec
+opt-1-log10-1k same-zone retry T+90 check-in continued to completion.
+
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h
+State running; PID alive; approx step 310; loss decreasing overall 9.1391 to 6.8065; no NaN/OOM/traceback; throughput about 6.9-7.1s/step with small outliers; user explicitly chose Continue to completion.
+
+
+## 2026-05-11T01:50:23Z | feat/tpu-support@87b1b9d | info | exec
+opt-1-log10-1k same-zone retry T+60 check-in continued.
+
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h
+State running; PID alive; reached step 40; loss decreasing 9.1391 to 8.1699; steps 30-40 around 7.05s/step; no NaN/OOM/traceback; user chose Continue to T+90.
+
+
+## 2026-05-11T01:35:09Z | feat/tpu-support@87b1b9d | info | exec
+opt-1-log10-1k same-zone retry T+45 check-in continued.
+
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h
+State running; PID alive; step 10 first loss 9.1391 (text 14.0373/audio 7.7354), 235.36s/step compile-dominated; no NaN/OOM/traceback; user chose Continue to T+60.
+
+
+## 2026-05-11T01:21:08Z | feat/tpu-support@87b1b9d | info | exec
+opt-1-log10-1k same-zone retry T+30 check-in continued.
+
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h
+State running; PID alive; step-1 TPU diagnostic reached; no logged loss yet; no NaN/OOM/traceback; user chose Continue to T+45.
+
+
+## 2026-05-11T01:06:00Z | feat/tpu-support@87b1b9d | info | exec
+opt-1-log10-1k same-zone retry T+15 check-in continued.
+
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h
+State running; PID alive; compiling first training graph; no first step/loss yet; no NaN/OOM/traceback; user chose Continue to T+30.
+
+
+## 2026-05-11T00:49:38Z | feat/tpu-support@87b1b9d | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-11T00:49:38Z | feat/tpu-support@87b1b9d | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T00:47:56Z | feat/tpu-support@87b1b9d | done | exec
+opt-1-log10-1k same-zone retry reached ACTIVE and started training.
+
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/58k4t99h
+Run name: v6e-spot-stage2-opt1-log10-1k; run_id=58k4t99h.
+Config: configs/stage2_tpu_v6e_spot_opt_log10_1k.yaml; QR ACTIVE; TPU READY/HEALTHY in europe-west4-a.
+
+
+## 2026-05-11T00:29:24Z | feat/tpu-support@87b1b9d | done | exec
+Recreated v6e-8 spot QR in europe-west4-a for opt-1-log10-1k retry.
+
+User explicitly requested retrying europe-west4-a again after prior no-capacity failure.
+QR: tinyaya-stage2-spot-v6e8-eu-qr; node: tinyaya-stage2-spot-v6e8-eu; accelerator: v6e-8 spot.
+Config: configs/stage2_tpu_v6e_spot_opt_log10_1k.yaml; repo tarball: gs://tinyaya-stage2-tpu/code/tinyaya-repo-log10-1k-retry.tar.gz.
+
+
+## 2026-05-11T00:27:30Z | feat/tpu-support@87b1b9d | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-11T00:26:24Z | feat/tpu-support@87b1b9d | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-11T00:26:14Z | feat/tpu-support@87b1b9d | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
+## 2026-05-11T00:26:14Z | feat/tpu-support@87b1b9d | info | session
+SessionEnd (other): 28 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 1000-step validation
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Add opt-in `train.compile_warmup_steps` for TPU.
+- Implement zero-LR/zero-weight-decay static macro-step warmup.
+- Verify no weight drift, no late compile after step 1, and matched
+- Re-run baseline `batch_size=8`, `grad_accum=4` with instrumentation.
+- Test `batch_size=16`, `grad_accum=2` through 20-step and 300-step gates.
+
+
 ## 2026-05-10T18:28:16Z | feat/tpu-support@74f8879 | done | verify
 Repository verification passed after v6e capacity-failure record.
 
