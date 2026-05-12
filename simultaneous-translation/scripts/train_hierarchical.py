@@ -948,6 +948,17 @@ def main():
                 if is_tpu
                 else None,
             )
+            # TPU note: wandb.log(data, step=N) is ignored in shared mode;
+            # the _step counter auto-increments from 0 regardless. Use
+            # define_metric with a custom step_metric so charts show actual
+            # training step (10, 20, ..., 5000) instead of the internal
+            # counter (0, 1, ..., 499).
+            wandb.define_metric("global_step", hidden=True)
+            wandb.define_metric("train/*", step_metric="global_step")
+            wandb.define_metric("perf/*", step_metric="global_step")
+            wandb.define_metric("val/*", step_metric="global_step")
+            wandb.define_metric("audio/*", step_metric="global_step")
+            wandb.define_metric("mem/*", step_metric="global_step")
             if is_tpu:
                 run_id = wandb.run.id
                 try:
@@ -1506,7 +1517,8 @@ def main():
                 }
                 for i, v in enumerate(avg["per_cb"]):
                     log[f"train/per_codebook_loss_{i}"] = v
-                wandb.log(log, step=step)
+                log["global_step"] = step
+                wandb.log(log)
             if is_tpu:
                 running_xla = {
                     "loss": torch.tensor(0.0, device=device),
@@ -1556,12 +1568,12 @@ def main():
 
                     wandb.log(
                         {
+                            "global_step": step,
                             "audio/source": wandb.Audio(r["source_wav"], sample_rate=24000),
                             "audio/target_gt": wandb.Audio(r["target_gt_wav"], sample_rate=24000),
                             "audio/generated": wandb.Audio(r["generated_wav"], sample_rate=24000),
                             "audio/cb0_accuracy_train": r["cb0_accuracy"],
                         },
-                        step=step,
                     )
             except Exception as e:
                 print(f"  demo failed: {e}")
@@ -1595,7 +1607,8 @@ def main():
                 log = {k: v for k, v in val.items() if k != "val/per_codebook_loss"}
                 for i, v in enumerate(val["val/per_codebook_loss"]):
                     log[f"val/per_codebook_loss_{i}"] = v
-                wandb.log(log, step=step)
+                log["global_step"] = step
+                wandb.log(log)
             if val["val/loss"] < best_val:
                 best_val = val["val/loss"]
                 best_dir = save_dir / "best_by_val"

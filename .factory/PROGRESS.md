@@ -26,6 +26,239 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-12T15:01:34Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
+
+
+## 2026-05-12T15:01:19Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-12T15:01:14Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-12T15:01:04Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PLAN.md`
+
+
+## 2026-05-12T15:00:59Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/PROGRESS.md`
+
+
+## 2026-05-12T15:05:00Z | feat/tpu-support@045b7ff | done | exec
+opt-prod5k (W&B `kzsijxv5`) completed 5000/5000 steps with exit 0 and canonical save
+
+5000-step production pass combining Phase 1 (log_every=10), Phase 2
+(compile_warmup_steps=1), and Phase 3 (b=8/g=4, only viable topology).
+W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/kzsijxv5
+Checkpoint: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-prod5k/step_005000_final/
+p50=6.14s, p99=6.76s, examples/sec=43.04, final loss=5.105 (text=9.990, audio=4.106)
+Wall: 562 min. vs iter24h baseline: 11.8% faster step time, 4.7% lower loss.
+TPU was preempted post-run (spot VM reclaimed after completion).
+
+## 2026-05-12T15:03:00Z | feat/tpu-support@045b7ff | done | edit
+Fixed W&B step counter: wandb.log(data, step=N) is ignored in shared
+mode, causing charts to show 0..499 instead of training steps 10..5000.
+
+Replaced with define_metric("global_step") + step_metric="global_step"
+on all train/perf/val/audio/mem metric groups. Each wandb.log() call
+now includes "global_step": step in the data dict instead of step=step.
+
+## 2026-05-12T15:00:20Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-12T15:00:15Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-12T15:00:08Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-12T15:00:02Z | feat/tpu-support@045b7ff | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-05-12T13:34:18Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T13:30:43Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T13:30:31Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T13:30:31Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T13:26:24Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T13:26:19Z | feat/tpu-support@045b7ff | info | session
+PreCompact (auto): 19 unchecked PLAN items
+
+Top open items:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+
+
+## 2026-05-12T13:26:12Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T13:25:22Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T11:35:59Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T04:02:05Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T04:01:54Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T04:01:54Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T03:50:30Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T03:03:01Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T02:46:02Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T02:46:02Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T02:17:39Z | feat/tpu-support@045b7ff | info | session
+SessionEnd (other): 19 item(s) carried forward
+
+Next steps:
+- Best promoted optimization config completes a 5000-step production
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `xla_grad_checkpoint=false` on the best Phase 3 candidate.
+- Test `depth_chunk_size=32`.
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+
+
+## 2026-05-12T02:17:39Z | feat/tpu-support@045b7ff | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-12T01:50:48Z | feat/tpu-support@045b7ff | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot_opt_prod5k.yaml`
+
+
 ## 2026-05-12T00:37:18Z | feat/tpu-support@59e46fe | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.factory/memories.md`
 

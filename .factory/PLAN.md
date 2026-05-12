@@ -60,6 +60,13 @@ preserving stability, checkpoint safety, and evaluation quality.
   triggered by 2x larger per-microbatch gradient tensors at b=16.
   b=32/g=1 is also unsafe. Phase 3 batch sweep closed; b=8/g=4
   remains the only viable batch topology under FSDPv2+bf16 on v6e-8.
+- **Production pass result:** `opt-prod5k` (W&B `kzsijxv5`) completed
+  5000/5000 steps with exit 0 and canonical checkpoint. Combines
+  Phases 1+2+3 optimizations. p50=6.14s, p99=6.76s,
+  examples/sec=43.04, final loss=5.105. Wall 562 min. 11.8% faster
+  step time vs iter24h baseline, 4.7% lower loss.
+  W&B: https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/kzsijxv5
+  GCS: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-prod5k/step_005000_final/
 
 ## Definition of Done
 
@@ -74,7 +81,7 @@ preserving stability, checkpoint safety, and evaluation quality.
   gate without NaN/OOM/late-recompile.
 - [x] Best promoted optimization config completes a 1000-step validation
   pass.
-- [ ] Best promoted optimization config completes a 5000-step production
+- [x] Best promoted optimization config completes a 5000-step production
   pass or is explicitly rejected with a recorded reason.
 - [ ] `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
   optimized checkpoint or the iter 24h fallback.
@@ -154,7 +161,7 @@ on v6e-8.**
 - [x] Run a 1000-step validation pass for the best candidate.
 - [x] Run a hot-redeploy 1000-step log10 validation without
   `PT_XLA_DEBUG_LEVEL=1` before any 5000-step promotion.
-- [ ] Run a 5000-step production pass if the 1000-step pass is stable.
+- [x] Run a 5000-step production pass if the 1000-step pass is stable.
 - [ ] Run `eval_stage2.py` and record ASR-BLEU + DNSMOS.
 - [ ] Update `memories.md` with the promoted config or rejection reason.
 

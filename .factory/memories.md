@@ -22,6 +22,34 @@
 
 ## Architecture decisions
 
+### 2026-05-12: opt-prod5k 5000-step production pass completed
+
+**Decision:** The combined Phase 1+2+3 production config
+(log_every=10, compile_warmup_steps=1, b=8/g=4) completed 5000/5000
+steps on v6e-8 spot with exit 0 and canonical save. p50=6.14s,
+p99=6.76s, examples/sec=43.04, final loss=5.105. This is 11.8% faster
+per step and 4.7% lower loss versus the iter 24h baseline.
+
+**W&B:** `kzsijxv5` (v6e-spot-stage2-opt-prod5k)
+**Checkpoint:**
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-prod5k/step_005000_final/`
+
+**Gotcha:** The TPU was preempted after the run completed (spot VM
+reclaimed). The QR will need recreation for future runs.
+
+### 2026-05-12: W&B shared mode ignores wandb.log step=N parameter
+
+**Decision:** `wandb.log(data, step=N)` is silently ignored in W&B
+shared mode (used for SPMD TPU). The `_step` counter auto-increments
+from 0 regardless, causing charts to show 0..499 instead of training
+steps 10..5000 when log_every=10. Fix: use `wandb.define_metric()`
+with a custom `global_step` metric as `step_metric` for all
+train/perf/val/audio/mem metric groups, and include `"global_step":
+step` in every `wandb.log()` data dict instead of passing `step=step`.
+
+**Gotcha:** This affects all future runs. Past runs (iter24h, hot300,
+hot1k, warmup-r1, prod5k) retain the broken step counter in W&B.
+
 ### 2026-05-11: log_every=10 hot-redeploy validation promoted to production candidate
 
 **Decision:** `log_every=10` is the current Phase 1 production
