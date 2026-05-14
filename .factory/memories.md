@@ -48,6 +48,17 @@ throughput trade-off for this model; it consumes nearly all per-chip
 HBM before the first logged boundary, so it does not produce a safe
 promotion signal.
 
+### 2026-05-14: `depth_chunk_size=64` passed 300-step Phase 4 gate
+
+**Decision:** `depth_chunk_size=64` is the current fastest Phase 4
+candidate. W&B `5mhltpif` completed 300/300 steps with exit 0 and final
+checkpoint upload. Final metrics: p50=3.810s, p99=3.954s,
+examples/sec=67.24, loss=6.6668, and HBM peak=26.34 GiB.
+
+**Gotcha:** The depth64 HBM peak is below the 29 GiB abort gate but much
+closer to the ceiling than depth32. Promote it only through the normal
+1000-step gate before any 5000-step production run.
+
 ### 2026-05-13: opt-4-depth32 passed 300-step Phase 4 gate
 
 **Decision:** `depth_chunk_size=32` is a viable Phase 4 candidate on

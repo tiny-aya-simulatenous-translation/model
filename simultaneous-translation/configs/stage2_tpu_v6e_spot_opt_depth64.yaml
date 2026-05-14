@@ -1,0 +1,73 @@
+# TPU v6e SPOT optimization config: Phase 4 depth_chunk_size=64.
+#
+# WHY THIS EXISTS
+# ---------------
+# Phase 4 candidate: test whether larger depth chunks reduce Python
+# loop overhead further. opt-4-depth32 (W&B i15igq8d) passed the
+# 300-step gate with p50=5.296s and HBM peak 21.57 GiB. If
+# depth_chunk_size=64 is faster with safe HBM and loss parity, it
+# replaces depth32 as the Phase 4 promotion candidate.
+#
+# Base config: depth32 (W&B i15igq8d, log_every=10, warmup=1, b=8/g=4).
+# Change: depth_chunk_size 32 -> 64.
+#
+# v6e has 32 GiB HBM/chip. depth32 measured peak 21.57 GiB.
+# depth_chunk_size=64 holds 2x more depth decoder activations per
+# chunk, which may increase HBM by ~2-4 GiB. If the run exceeds
+# 29 GiB, immediately abort and roll back to depth32.
+#
+# Run ladder: 300-step gate -> 1000-step if promoted.
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 400
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+train:
+  num_codebooks: 8
+  batch_size: 8
+  grad_accum: 4
+  max_steps: 300
+  warmup_steps: 200
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  fsdp_barrier_hook: false
+  depth_chunk_size: 64
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: true
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  save_every: 0
+  audio_every: 1000
+  val_every: 500
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-depth64
+  keep_last_n: 5
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-spot-stage2-opt4-depth64
+
+perf:
+  enabled: true
+  warmup_skip_steps: 50
+  xprof_trace_labels: false

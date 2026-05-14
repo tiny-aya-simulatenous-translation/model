@@ -80,6 +80,11 @@ preserving stability, checkpoint safety, and evaluation quality.
   before the 300-step gate. It stalled after compile warmup with TPU
   duty 0%, reached internal `step=1` at `29.08 GiB / 31.25 GiB`, and
   crossed the 29 GiB HBM abort gate. Keep `xla_grad_checkpoint=true`.
+- **Phase 4 result:** `opt-4-depth64` (W&B `5mhltpif`) completed
+  300/300 steps with exit 0 and final checkpoint upload. Final metrics:
+  p50=3.810s, p99=3.954s, examples/sec=67.24, loss=6.6668, and
+  HBM peak=26.34 GiB. It is the current fastest Phase 4 candidate and
+  remains below the 29 GiB HBM gate.
 
 ## Definition of Done
 
@@ -145,7 +150,7 @@ on v6e-8.**
 - [x] Test `xla_grad_checkpoint=false` on the best Phase 3 candidate
   (rejected: W&B `wvgzewlk`, `29.08 GiB` HBM at internal step 1).
 - [x] Test `depth_chunk_size=32` (`opt-4-depth32`, W&B `i15igq8d`, passed 300-step gate).
-- [ ] Test `depth_chunk_size=64` only if HBM remains safe.
+- [x] Test `depth_chunk_size=64` (`opt-4-depth64`, W&B `5mhltpif`, passed 300-step gate).
 - [ ] Keep iter 24h defaults if larger candidates regress or OOM.
 
 ### Phase 5 — Input pipeline and transfer profiling

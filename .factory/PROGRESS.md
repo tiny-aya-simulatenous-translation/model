@@ -26,6 +26,86 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-14T07:55:43Z | feat/tpu-hbm-instrumentation@0264993 | done | exec
+`opt-4-depth64` passed the 300-step Phase 4 gate.
+
+W&B `5mhltpif`
+(https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/5mhltpif)
+completed 300/300 steps with exit 0 and final checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-depth64/step_000300_final`.
+Final metrics: p50 `3.810s`, p90 `3.841s`, p99 `3.954s`,
+examples/sec `67.24`, final loss `6.6668`, and HBM peak
+`26.34 GiB` with `mem/hbm_available=1`. No NaN/OOM/stall/fatal
+signature observed; QR is idle after completion.
+
+## 2026-05-14T07:54:58Z | feat/tpu-hbm-instrumentation@0264993 | info | session
+SessionEnd (other): 15 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+
+
+## 2026-05-14T07:54:58Z | feat/tpu-hbm-instrumentation@0264993 | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-14T07:51:30Z | feat/tpu-hbm-instrumentation@0264993 | info | session
+SessionEnd (other): 15 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+
+
+## 2026-05-14T07:47:58Z | feat/tpu-hbm-instrumentation@0264993 | info | session
+SessionEnd (other): 15 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+
+
+## 2026-05-14T03:32:41Z | feat/tpu-hbm-instrumentation@0264993 | info | session
+SessionEnd (other): 15 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Test `depth_chunk_size=64` only if HBM remains safe.
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+
+
+## 2026-05-14T03:32:31Z | feat/tpu-hbm-instrumentation@0264993 | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
+## 2026-05-14T03:30:10Z | feat/tpu-hbm-instrumentation@0264993 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_spot_opt_depth64.yaml`
+
+
 ## 2026-05-14T03:27:03Z | feat/tpu-hbm-instrumentation@b01b255 | fail | exec
 `opt-4-no-ckpt` rejected: compile-stall/memory-pressure crossed the HBM abort gate.
 
