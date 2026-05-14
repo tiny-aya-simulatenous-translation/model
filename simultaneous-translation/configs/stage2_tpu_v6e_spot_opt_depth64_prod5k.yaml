@@ -1,0 +1,69 @@
+# TPU v6e SPOT optimization config: Phase 4 depth64 production pass.
+#
+# WHY THIS EXISTS
+# ---------------
+# Production-length validation for the promoted depth64 candidate.
+# depth64 passed 300 steps as W&B 5mhltpif and 1000 steps as W&B
+# orz36wmc with p50≈3.81s and HBM peak≈26.1 GiB. This config extends
+# the same knobs to 5000 steps before treating depth64 as durable.
+#
+# Base config: opt-4-depth64-1k.
+# Change: max_steps 1000 -> 5000; save/run names -> depth64-prod5k.
+#
+# TPU note: depth64 is close enough to the 29 GiB HBM abort gate that
+# production monitoring should keep `mem/peak_gb` visible and abort on
+# sustained HBM >=29 GiB, NaN, OOM, or late-recompile regression.
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 400
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+train:
+  num_codebooks: 8
+  batch_size: 8
+  grad_accum: 4
+  max_steps: 5000
+  warmup_steps: 200
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  fsdp_barrier_hook: false
+  depth_chunk_size: 64
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: true
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  save_every: 0
+  audio_every: 1000
+  val_every: 500
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-depth64-prod5k
+  keep_last_n: 5
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-spot-stage2-opt4-depth64-prod5k
+
+perf:
+  enabled: true
+  warmup_skip_steps: 50
+  xprof_trace_labels: false

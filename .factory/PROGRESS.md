@@ -26,6 +26,86 @@ moved to `.factory/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-05-14T12:41:27Z | feat/tpu-hbm-instrumentation@f71de23 | done | exec
+`opt-4-depth64-1k` passed the 1000-step validation gate.
+
+W&B `orz36wmc`
+(https://wandb.ai/cataluna84/tinyaya-stage2-tpu/runs/orz36wmc)
+completed 1000/1000 steps with exit 0 and final checkpoint
+`gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-spot-opt-depth64-1k/step_001000_final`.
+Final metrics: p50 `3.810s`, p90 `3.850s`, p99 `4.150s`,
+examples/sec `66.89`, final loss `6.1699`, and HBM peak
+`26.11 GiB` with `mem/hbm_available=1`. No NaN/OOM/fatal signature;
+QR is idle after completion. Depth64 is eligible for a 5000-step
+production pass.
+
+## 2026-05-14T12:30:17Z | feat/tpu-hbm-instrumentation@f71de23 | info | session
+SessionEnd (other): 14 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+- Require macro-step-boundary bucket switches and no surprise late
+
+
+## 2026-05-14T12:30:17Z | feat/tpu-hbm-instrumentation@f71de23 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [124] # working tree is sane (no merge markers, no obvious leaks)
+    timeout after 20s
+
+
+## 2026-05-14T12:27:16Z | feat/tpu-hbm-instrumentation@f71de23 | info | session
+SessionEnd (other): 14 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+- Require macro-step-boundary bucket switches and no surprise late
+
+
+## 2026-05-14T09:39:17Z | feat/tpu-hbm-instrumentation@f71de23 | info | session
+SessionEnd (other): 14 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+- Require macro-step-boundary bucket switches and no surprise late
+
+
+## 2026-05-14T08:07:08Z | feat/tpu-hbm-instrumentation@f71de23 | info | session
+SessionEnd (other): 14 item(s) carried forward
+
+Next steps:
+- `eval_stage2.py` ASR-BLEU + DNSMOS are recorded for the selected
+- Keep iter 24h defaults if larger candidates regress or OOM.
+- Use XProf to determine whether host/device input gaps exist.
+- Add opt-in `MPDeviceLoader`/prefetch only if profiling shows an
+- Sweep `num_workers=4/8` only if host feed is a bottleneck.
+- Quantify padding waste at `max_frames=400`.
+- If material, test static prewarmed buckets such as `200/300/400`.
+- Require macro-step-boundary bucket switches and no surprise late
+
+
+## 2026-05-14T08:07:08Z | feat/tpu-hbm-instrumentation@f71de23 | done | verify
+verify: 12 passed, 0 failed out of 12 on Stop
+
+
 ## 2026-05-14T07:55:43Z | feat/tpu-hbm-instrumentation@0264993 | done | exec
 `opt-4-depth64` passed the 300-step Phase 4 gate.
 

@@ -85,6 +85,11 @@ preserving stability, checkpoint safety, and evaluation quality.
   p50=3.810s, p99=3.954s, examples/sec=67.24, loss=6.6668, and
   HBM peak=26.34 GiB. It is the current fastest Phase 4 candidate and
   remains below the 29 GiB HBM gate.
+- **Phase 4 validation:** `opt-4-depth64-1k` (W&B `orz36wmc`)
+  completed 1000/1000 steps with exit 0 and final checkpoint upload.
+  Final metrics: p50=3.810s, p99=4.150s, examples/sec=66.89,
+  loss=6.1699, and HBM peak=26.11 GiB. It is eligible for a
+  5000-step production pass.
 
 ## Definition of Done
 
@@ -151,6 +156,8 @@ on v6e-8.**
   (rejected: W&B `wvgzewlk`, `29.08 GiB` HBM at internal step 1).
 - [x] Test `depth_chunk_size=32` (`opt-4-depth32`, W&B `i15igq8d`, passed 300-step gate).
 - [x] Test `depth_chunk_size=64` (`opt-4-depth64`, W&B `5mhltpif`, passed 300-step gate).
+- [x] Validate `depth_chunk_size=64` through 1000 steps (`orz36wmc`, passed).
+- [ ] Run `depth_chunk_size=64` 5000-step production pass.
 - [ ] Keep iter 24h defaults if larger candidates regress or OOM.
 
 ### Phase 5 — Input pipeline and transfer profiling
