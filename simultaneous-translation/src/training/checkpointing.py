@@ -99,12 +99,19 @@ def save_checkpoint(
         xm.mark_step()
         xm.wait_device_ops()
 
+    # model_audio_embed exists only when parallel two-stream is enabled
+    has_model_audio_embed = hasattr(model.backbone, "model_audio_embed")
+
     if is_xla:
         peft_state = _to_cpu_state_dict(model.backbone.model)
         proj_state = _to_cpu_state_dict(model.projection)
         depth_state = _to_cpu_state_dict(model.depth_decoder)
         text_state = _to_cpu_state_dict(model.backbone.text_embed)
         audio_state = _to_cpu_state_dict(model.backbone.audio_heads)
+        model_audio_state = (
+            _to_cpu_state_dict(model.backbone.model_audio_embed)
+            if has_model_audio_embed else None
+        )
         optim_state = _detach_to_cpu(optimizer.state_dict())
         sched_state = (
             _detach_to_cpu(scheduler.state_dict())
@@ -117,6 +124,10 @@ def save_checkpoint(
         depth_state = model.depth_decoder.state_dict()
         text_state = model.backbone.text_embed.state_dict()
         audio_state = model.backbone.audio_heads.state_dict()
+        model_audio_state = (
+            model.backbone.model_audio_embed.state_dict()
+            if has_model_audio_embed else None
+        )
         optim_state = optimizer.state_dict()
         sched_state = (
             scheduler.state_dict()
@@ -139,6 +150,8 @@ def save_checkpoint(
     torch.save(depth_state, os.path.join(save_dir, "depth_decoder.pt"))
     torch.save(text_state, os.path.join(save_dir, "text_embed.pt"))
     torch.save(audio_state, os.path.join(save_dir, "audio_heads.pt"))
+    if model_audio_state is not None:
+        torch.save(model_audio_state, os.path.join(save_dir, "model_audio_embed.pt"))
     torch.save(optim_state, os.path.join(save_dir, "optimizer.pt"))
     if sched_state is not None:
         torch.save(sched_state, os.path.join(save_dir, "scheduler.pt"))
@@ -211,13 +224,16 @@ def save_checkpoint_canonical_final(
     xm.mark_step()
     xm.wait_device_ops()
 
-    for sub in (
+    subs_to_cpu = [
         model.backbone.model,
         model.projection,
         model.depth_decoder,
         model.backbone.text_embed,
         model.backbone.audio_heads,
-    ):
+    ]
+    if hasattr(model.backbone, "model_audio_embed"):
+        subs_to_cpu.append(model.backbone.model_audio_embed)
+    for sub in subs_to_cpu:
         sub.to("cpu")
 
     xm.rendezvous("post_to_cpu_canonical_final")
@@ -256,6 +272,8 @@ def save_checkpoint_canonical_final(
     torch.save(model.depth_decoder.state_dict(), os.path.join(write_dir, "depth_decoder.pt"))
     torch.save(model.backbone.text_embed.state_dict(), os.path.join(write_dir, "text_embed.pt"))
     torch.save(model.backbone.audio_heads.state_dict(), os.path.join(write_dir, "audio_heads.pt"))
+    if hasattr(model.backbone, "model_audio_embed"):
+        torch.save(model.backbone.model_audio_embed.state_dict(), os.path.join(write_dir, "model_audio_embed.pt"))
 
     with open(os.path.join(write_dir, "metadata.json"), "w") as f:
         json.dump({"step": "final", "save_kind": "canonical_final"}, f, indent=2)
@@ -296,12 +314,16 @@ def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:
         sd = load_peft_weights(peft_dir)
         set_peft_model_state_dict(model.backbone.model, sd)
 
-    for fname, mod in [
+    modules_to_load = [
         ("projection.pt", model.projection),
         ("depth_decoder.pt", model.depth_decoder),
         ("text_embed.pt", model.backbone.text_embed),
         ("audio_heads.pt", model.backbone.audio_heads),
-    ]:
+    ]
+    if hasattr(model.backbone, "model_audio_embed"):
+        modules_to_load.append(("model_audio_embed.pt", model.backbone.model_audio_embed))
+
+    for fname, mod in modules_to_load:
         p = os.path.join(load_dir, fname)
         if os.path.exists(p):
             mod.load_state_dict(torch.load(p, map_location="cpu", weights_only=True), strict=False)

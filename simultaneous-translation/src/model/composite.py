@@ -206,6 +206,7 @@ class TinyAyaMoshiComposite(nn.Module):
         self,
         text_ids: torch.LongTensor,
         audio_codes: torch.LongTensor,
+        model_audio_codes: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
         full_audio_codes: torch.LongTensor | None = None,
         depth_chunk_size: int = 16,
@@ -267,6 +268,7 @@ class TinyAyaMoshiComposite(nn.Module):
         backbone_out = self.backbone(
             text_ids=text_ids,
             audio_codes=audio_codes,
+            model_audio_codes=model_audio_codes,
             attention_mask=attention_mask,
         )
         hidden_states = backbone_out["hidden_states"]
@@ -338,10 +340,18 @@ class TinyAyaMoshiComposite(nn.Module):
 
             # Restore the [B, chunk, num_codebooks, 2048] shape.
             chunk_logits = chunk_logits_flat.reshape(b, chunk_len, self.num_codebooks, -1)
+            # Depth decoder positions: 0=text, 1-7=audio CB0-CB6.
+            # We only want positions 1-7 as CB1-CB7 predictions.
+            chunk_logits = chunk_logits[:, :, 1:, :]  # [B, chunk, 7, 2048]
             audio_logits_chunks.append(chunk_logits)
 
-        # Concatenate along the time axis, then permute to the
-        # expected [B, num_codebooks, T, 2048].
-        audio_logits = torch.cat(audio_logits_chunks, dim=1).permute(0, 2, 1, 3)
+        # Concatenate along the time axis → [B, T, 7, 2048]
+        depth_logits = torch.cat(audio_logits_chunks, dim=1).permute(0, 2, 1, 3)  # [B, 7, T, 2048]
+
+        # CB0 from backbone's audio_heads[0] (Moshi-style)
+        cb0_logits = self.backbone.audio_heads[0](hidden_states).unsqueeze(1)  # [B, 1, T, 2048]
+
+        # Combine: [B, 8, T, 2048] = [CB0 from backbone, CB1-CB7 from depth]
+        audio_logits = torch.cat([cb0_logits, depth_logits], dim=1)
 
         return (text_logits, audio_logits, hidden_states)

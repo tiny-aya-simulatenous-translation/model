@@ -1,0 +1,46 @@
+data:
+  train_split: /home/alperiox/training_data_full/splits/train_26k.jsonl
+  val_split: /home/alperiox/training_data_full/splits/val_500.jsonl
+  encoded_dir: /home/alperiox/training_data_full/encoded
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: true
+train:
+  num_codebooks: 8
+  batch_size: 2
+  grad_accum: 2
+  max_steps: 5000
+  warmup_steps: 200
+  min_lr_ratio: 0.1
+  depth_chunk_size: 16
+  precision: bfloat16
+  max_grad_norm: 1.0
+  weight_decay: 0.01
+  adam_beta1: 0.9
+  adam_beta2: 0.999
+  adam_eps: 1.0e-8
+  ss_max_ratio: 0.3
+  ss_warmup_steps: 2000
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+optim:
+  lr_lora: 3.0e-4
+  lr_full_ft: 1.0e-4
+  lr_projection: 1.0e-3
+  lr_depth: 5.0e-4
+  lr_audio_embed: 1.0e-3
+  lr_text_embed: 1.0e-3
+  lr_model_audio_embed: 1.0e-3
+logging:
+  log_every: 10
+  save_every: 500
+  audio_every: 500
+  val_every: 500
+  save_dir: checkpoints/stage2_26k_parallel
+  wandb_project: tinyaya-s2s
+  wandb_run_name: 26k_parallel_moshi_full
+  use_wandb: true
+  push_to_hub: true
+  hub_repo_id: alperiox/tinyaya-s2s-stage2

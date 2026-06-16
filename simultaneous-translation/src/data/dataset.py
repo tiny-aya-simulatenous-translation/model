@@ -26,6 +26,43 @@ from torch.utils.data import Dataset
 
 from .interleaver import Interleaver, load_alignments
 
+SILENCE_TOKEN = 2048  # Beyond valid Mimi codes [0-2047], means "not speaking"
+
+
+def apply_codebook_delay(codes: torch.Tensor, pad_token: int = SILENCE_TOKEN) -> torch.Tensor:
+    """Apply Moshi-style temporal delay pattern to codebook tensor.
+
+    CB_k is shifted right by k frames, padding with pad_token on the left.
+    This means at frame t, codebook k holds the value from original frame t-k,
+    giving the model causal lookahead for higher codebooks.
+
+    Args:
+        codes: [num_codebooks, T] tensor of audio codes
+        pad_token: token used for padding (silence)
+
+    Returns:
+        Delayed codes tensor [num_codebooks, T], same shape.
+    """
+    K, T = codes.shape
+    delayed = torch.full_like(codes, pad_token)
+    for k in range(K):
+        if k < T:
+            delayed[k, k:] = codes[k, : T - k]
+    return delayed
+
+
+def undo_codebook_delay(codes: torch.Tensor, pad_token: int = SILENCE_TOKEN) -> torch.Tensor:
+    """Reverse the codebook delay pattern for audio decoding.
+
+    Shifts CB_k left by k frames, padding with pad_token on the right.
+    """
+    K, T = codes.shape
+    undelayed = torch.full_like(codes, pad_token)
+    for k in range(K):
+        if k < T:
+            undelayed[k, : T - k] = codes[k, k:]
+    return undelayed
+
 
 class InterleavedAudioDataset(Dataset):
     """Stage 1: Loads pre-encoded audio + alignment JSONs.
@@ -276,8 +313,23 @@ class StreamingTranslationDataset(Dataset):
         loss_mask = torch.zeros(T_total, dtype=torch.long)
         loss_mask[T_src:] = 1
 
+        # Parallel two-stream format (Moshi-style)
+        # User stream: source audio, then silence
+        # Model stream: silence, then target audio
+        user_audio_codes = torch.full_like(audio_codes, SILENCE_TOKEN)
+        user_audio_codes[:, :T_src] = src_codes[:, :T_src]
+        model_audio_codes = torch.full_like(audio_codes, SILENCE_TOKEN)
+        model_audio_codes[:, T_src:] = tgt_codes[:, :T_tgt]
+
+        # Codebook delay pattern (Moshi-style): CB_k shifted right by k frames.
+        # CB0 stays in place; CB1 is 1 step behind, CB2 is 2 steps behind, etc.
+        # This gives the depth decoder causal lookahead for higher codebooks.
+        model_audio_codes = apply_codebook_delay(model_audio_codes, pad_token=SILENCE_TOKEN)
+
         return {
             "audio_codes": audio_codes,
+            "user_audio_codes": user_audio_codes,
+            "model_audio_codes": model_audio_codes,
             "text_ids": text_ids,
             "loss_mask": loss_mask,
             "num_frames": T_total,

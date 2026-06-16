@@ -384,11 +384,14 @@ def get_param_groups(model, optim_cfg):
         "projection": {"params": [], "lr": optim_cfg["lr_projection"]},
         "depth": {"params": [], "lr": optim_cfg["lr_depth"]},
         "text_embed": {"params": [], "lr": optim_cfg["lr_text_embed"]},
+        "model_audio_embed": {"params": [], "lr": optim_cfg.get("lr_model_audio_embed", optim_cfg["lr_audio_embed"])},
     }
     for name, param in model.named_parameters():
         if not param.requires_grad:
             continue
-        if "projection" in name and "depth" not in name and "input_proj" not in name:
+        if "model_audio_embed" in name:
+            groups["model_audio_embed"]["params"].append(param)
+        elif "projection" in name and "depth" not in name and "input_proj" not in name:
             groups["projection"]["params"].append(param)
         elif "depth_decoder" in name:
             groups["depth"]["params"].append(param)
@@ -517,6 +520,16 @@ def run_validation(
         mask = batch["attention_mask"].to(device)
         loss_mask = batch["loss_mask"].to(device)
 
+        # Parallel streams (Moshi-style)
+        if "user_audio_codes" in batch:
+            user_cb0 = batch["user_audio_codes"][:, 0, :].to(device)
+            model_cb0 = batch["model_audio_codes"][:, 0, :].to(device)
+            full_model_codes = batch["model_audio_codes"].to(device)
+        else:
+            user_cb0 = cb0
+            model_cb0 = None
+            full_model_codes = None
+
         autocast = (
             backend.autocast_context(dtype=torch.bfloat16)
             if backend
@@ -525,13 +538,14 @@ def run_validation(
         with autocast:
             output = model(
                 text_ids=text_ids,
-                audio_codes=cb0,
+                audio_codes=user_cb0 if model_cb0 is not None else cb0,
+                model_audio_codes=model_cb0,
                 attention_mask=mask,
-                full_audio_codes=all_codes[:, :num_codebooks, :],
+                full_audio_codes=full_model_codes[:, :num_codebooks, :] if full_model_codes is not None else all_codes[:, :num_codebooks, :],
                 depth_chunk_size=depth_chunk_size,
             )
             text_logits, audio_logits, _ = output
-            audio_targets = all_codes[:, :num_codebooks, :]
+            audio_targets = full_model_codes[:, :num_codebooks, :] if full_model_codes is not None else all_codes[:, :num_codebooks, :]
             losses = compute_hierarchical_translation_loss(
                 text_logits,
                 audio_logits,
@@ -1180,6 +1194,16 @@ def main():
                     mask = batch["attention_mask"].to(device)
                     loss_mask = batch["loss_mask"].to(device)
 
+                    # Parallel streams (Moshi-style)
+                    if "user_audio_codes" in batch:
+                        user_cb0 = batch["user_audio_codes"][:, 0, :].to(device)
+                        model_cb0 = batch["model_audio_codes"][:, 0, :].to(device)
+                        full_model_codes = batch["model_audio_codes"].to(device)
+                    else:
+                        user_cb0 = cb0
+                        model_cb0 = None
+                        full_model_codes = None
+
                     # Mark input sharding for TPU SPMD.
                     if hasattr(backend, "mark_sharding"):
                         backend.mark_sharding(text_ids, ("fsdp", None))
@@ -1191,13 +1215,14 @@ def main():
                     with backend.autocast_context(dtype=torch.bfloat16):
                         output = model(
                             text_ids=text_ids,
-                            audio_codes=cb0,
+                            audio_codes=user_cb0 if model_cb0 is not None else cb0,
+                            model_audio_codes=model_cb0,
                             attention_mask=mask,
-                            full_audio_codes=all_codes[:, :num_codebooks, :],
+                            full_audio_codes=full_model_codes[:, :num_codebooks, :] if full_model_codes is not None else all_codes[:, :num_codebooks, :],
                             depth_chunk_size=depth_chunk,
                         )
                         text_logits, audio_logits, _ = output
-                        audio_targets = all_codes[:, :num_codebooks, :]
+                        audio_targets = full_model_codes[:, :num_codebooks, :] if full_model_codes is not None else all_codes[:, :num_codebooks, :]
                         losses = compute_hierarchical_translation_loss(
                             text_logits,
                             audio_logits,

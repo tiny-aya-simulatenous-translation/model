@@ -125,6 +125,15 @@ class TinyAyaBackbone(nn.Module):
         )
         self.hidden_size = hidden
 
+        # Moshi-style: separate embedding for model's audio stream
+        # +1 for silence token (code 2048 = "not speaking")
+        self.SILENCE_TOKEN = audio_vocab_size  # 2048
+        self.model_audio_embed = nn.Embedding(audio_vocab_size + 1, hidden)
+        with torch.no_grad():
+            src_weights = self.get_input_embeddings().weight.data[self.audio_token_offset:]
+            self.model_audio_embed.weight.data[:audio_vocab_size] = src_weights[:audio_vocab_size].clone()
+            self.model_audio_embed.weight.data[self.SILENCE_TOKEN] = 0.0
+
     def get_input_embeddings(self):
         """Return the extended HF input embedding (text + special + audio)."""
         return self.model.get_input_embeddings()
@@ -133,6 +142,7 @@ class TinyAyaBackbone(nn.Module):
         self,
         text_ids: torch.LongTensor,
         audio_codes: torch.LongTensor,
+        model_audio_codes: torch.LongTensor | None = None,
         attention_mask: torch.Tensor | None = None,
     ) -> dict[str, torch.Tensor]:
         """Forward pass with summed text + audio embeddings.
@@ -163,21 +173,26 @@ class TinyAyaBackbone(nn.Module):
         as a parameter so a future caller cannot accidentally re-enable
         it on TPU.
         """
-        # Audio embeddings from the extended backbone table. We shift
-        # raw codebook IDs into the audio range that follows the text
-        # vocab + special tokens.
-        audio_token_ids = audio_codes + self.audio_token_offset
-        audio_embeds = self.get_input_embeddings()(audio_token_ids)
+        # User audio embeddings (source/listener stream)
+        # Clamp SILENCE_TOKEN (2048) to valid range before offset lookup,
+        # then zero out those positions (silence should contribute nothing).
+        is_silence = audio_codes >= self.audio_vocab_size
+        safe_codes = audio_codes.clamp(max=self.audio_vocab_size - 1)
+        audio_token_ids = safe_codes + self.audio_token_offset
+        user_audio_embeds = self.get_input_embeddings()(audio_token_ids)
+        user_audio_embeds = user_audio_embeds.masked_fill(is_silence.unsqueeze(-1), 0.0)
 
-        # Text embeddings from the separate table (Moshi-style sum
-        # fusion). Initialised from the backbone's own embeddings so
-        # the model starts from a warm point.
+        # Text embeddings
         text_embeds = self.text_embed(text_ids)
 
-        # Per-frame sum (Moshi-style interleaving). This stays a
-        # tensor-add on GPU and TPU; XLA fuses it into the embedding
-        # lookup at compile time.
-        combined = audio_embeds + text_embeds
+        # Model audio embeddings (speaker stream) — separate table
+        if model_audio_codes is not None:
+            model_audio_embeds = self.model_audio_embed(model_audio_codes)
+            # Three-way sum: user audio + model audio + text (Moshi-style)
+            combined = user_audio_embeds + model_audio_embeds + text_embeds
+        else:
+            # Backward compatibility: single stream mode
+            combined = user_audio_embeds + text_embeds
 
         outputs = self.model(
             inputs_embeds=combined,
