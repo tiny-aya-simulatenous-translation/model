@@ -499,6 +499,21 @@ the spirit of the [Contributor Covenant](https://www.contributor-covenant.org/).
 
 ---
 
+## Licensing of contributions
+
+This project is licensed under the **Apache License 2.0** (see
+[`LICENSE`](LICENSE)). By submitting a contribution (pull request, patch, or
+otherwise) you agree that your contribution is provided under the same
+Apache-2.0 terms — **inbound = outbound** — and that you have the right to
+submit it under that license. No separate CLA or DCO sign-off is required.
+
+Apache-2.0 covers the code in this repository only. The third-party models
+and datasets the project builds on (notably the Cohere `tiny-aya` base
+weights) carry their own licenses; see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) and [`NOTICE`](NOTICE).
+
+---
+
 ## Thank you
 
 Every contribution helps push the TinyAya project forward. Whether

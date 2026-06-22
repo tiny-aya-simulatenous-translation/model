@@ -6,7 +6,7 @@
 
 [![Python](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 [![PyTorch](https://img.shields.io/badge/pytorch--xla-2.9-orange.svg)](https://pytorch.org/xla/release/r2.9/index.html)
-[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](#license)
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-green.svg)](#license)
 [![Branch](https://img.shields.io/badge/branch-feat%2Ftpu--support-purple.svg)](https://github.com/)
 [![Status](https://img.shields.io/badge/production-v6e--8%205000%20steps%20done-success.svg)](#milestones)
 
@@ -776,9 +776,16 @@ If you use TinyAya Stage 2 in a paper, please cite:
 
 ## License
 
-Released under the **MIT License**. A `LICENSE` file containing the
-full MIT text will be added at the same time as the public release;
-until then, treat this repository as MIT-licensed by intent.
+The source code in this repository is released under the **Apache License
+2.0** — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Apache-2.0 covers
+**our code only**; the third-party models and datasets this project builds
+on carry their own licenses — see
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). In particular, the Cohere
+`tiny-aya` base model weights are governed by **Cohere's model license**, not
+this repository's license (we ship LoRA adapter deltas only).
+
+Compute was provided by Google's **TPU Research Cloud (TRC)**; research
+outputs acknowledge the TRC program per its terms.
 
 This project depends on:
 
