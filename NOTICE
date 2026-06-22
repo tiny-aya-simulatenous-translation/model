@@ -1,0 +1,40 @@
+TinyAya Stage 2 — Turkish <-> Hindi Speech-to-Speech Translation
+Copyright 2026 The TinyAya Stage 2 contributors.
+
+Contributors (GitHub):
+  - Mayank Bhaskar   (@cataluna84)
+  - Alper            (@alperiox)
+  - Ahmet            (@ahmeterdempmk)
+
+This product is licensed under the Apache License, Version 2.0 (see the
+LICENSE file). This NOTICE file is provided for informational purposes
+and must be propagated with redistributions per Section 4(d) of the
+License; its contents do not modify the License.
+
+================================================================================
+Acknowledgments
+================================================================================
+
+Cloud TPU compute for this project was generously provided by Google's
+TPU Research Cloud (TRC) program. Publications, blog posts, and other
+research outputs that use this work acknowledge the TRC program in
+accordance with its terms.
+
+================================================================================
+Important: scope of this license
+================================================================================
+
+The Apache-2.0 license in this repository covers the SOURCE CODE authored
+by the TinyAya Stage 2 contributors. It does NOT relicense the third-party
+models, datasets, or libraries this project builds on. In particular:
+
+  * The Cohere "tiny-aya" base model weights are governed by Cohere's own
+    model license, NOT by this repository's Apache-2.0 license. This
+    repository distributes only LoRA adapter deltas and training/eval code;
+    obtaining and using the base weights is subject to Cohere's terms.
+
+  * Audio codec / depth-decoder weights (Kyutai Moshi / Mimi) and the FLEURS
+    source data carry their own licenses.
+
+See THIRD_PARTY_NOTICES.md for the full list of third-party components and
+their licenses and obligations.
