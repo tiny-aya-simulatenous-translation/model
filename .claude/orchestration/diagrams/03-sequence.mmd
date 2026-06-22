@@ -1,0 +1,60 @@
+%% TPU canary self-healing orchestrator -- "How the loop runs in practice"
+%% v2 (2026-05-06): replaces v1 iter<5 cap with check-in cadence
+%% (15/30/45/60/90 min wall) + 4-option AskUser snapshot,
+%% adds Tier 3 always-escalate branch.
+%%
+%% Render: ../diagrams/render.sh 03-sequence.mmd
+%% Source spec: ../SPEC.md (section "How the loop runs in practice")
+
+sequenceDiagram
+    participant U as User
+    participant O as Me (orch)
+    participant P as orch_poll.py (bg)
+    participant W as tpu-watchdog
+    participant D as tpu-diagnoser
+    participant T as TPU (4 workers)
+
+    U->>O: go
+    O->>O: PATCH: apply file edits
+    O->>T: DEPLOY: bash _remote_redeploy.sh
+    O->>P: launch fireAndForget
+    P-->>P: every 60s -> JSONL
+
+    loop every 5-10 min wall
+      O->>W: Task("watchdog")
+      W-->>O: JSON {state, step, verdict, elapsed_min}
+
+      alt elapsed_min in 15,30,45,60,90 (checkin)
+        O->>U: AskUser snapshot + 4 options
+        alt user picks Continue
+          O->>O: schedule next checkin
+        else user picks Abort+Diag
+          O->>D: Task("diagnoser")
+          D-->>O: classification + patches
+          O-->>U: ESCALATE with diagnosis
+        else user picks Adjust
+          O->>O: PATCH user edits
+          O->>T: DEPLOY again
+        else user picks Pause
+          O-->>U: orchestrator stops
+        end
+
+      else verdict=ok and step<1
+        O->>O: continue WATCH
+
+      else verdict=stalled or crashed
+        O->>D: Task("diagnoser")
+        D-->>O: JSON {classification, patches, tier}
+        alt tier <= T2 and not repeat
+          O->>O: PATCH (apply recommended)
+          O->>T: DEPLOY again
+        else tier == T3
+          O-->>U: ESCALATE VM corruption (no auto-recreate)
+        else tier == T4 or repeat
+          O-->>U: ESCALATE diagnosis
+        end
+
+      else verdict=success
+        O-->>U: PAUSE for Phase 5 confirmation
+      end
+    end

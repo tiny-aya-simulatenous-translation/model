@@ -58,3 +58,8 @@ runs/
 .factory/settings.local.json
 .factory/archive/.tmp-*
 .factory/hooks/__pycache__/
+
+# --- claude memory system ---
+.claude/settings.local.json
+.claude/archive/.tmp-*
+.claude/hooks/__pycache__/
