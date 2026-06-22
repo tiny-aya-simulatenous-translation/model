@@ -59,6 +59,37 @@ def _detach_to_cpu(obj):
     return obj
 
 
+def _normalize_gcs_dest(save_dir: str) -> str | None:
+    """Return a clean ``gs://`` destination if ``save_dir`` targets GCS.
+
+    Accepts both the correct ``gs://bucket/key`` form and the
+    pathlib-mangled ``gs:/bucket/key`` (single slash) form -- the latter
+    happens when a caller wraps the URL in ``pathlib.Path`` first, which
+    collapses the double slash. Returns ``None`` for ordinary local paths.
+    """
+    s = str(save_dir)
+    if s.startswith("gs://"):
+        return s
+    if s.startswith("gs:/"):
+        return "gs://" + s[len("gs:/") :]
+    return None
+
+
+def _gsutil_cp_into(src_dir: str, gcs_dest: str) -> None:
+    """Copy the *contents* of ``src_dir`` into ``gcs_dest`` via gsutil."""
+    import subprocess
+
+    print(f"[ckpt] uploading {src_dir}/* -> {gcs_dest}", flush=True)
+    result = subprocess.run(
+        ["gsutil", "-m", "cp", "-r", src_dir.rstrip("/") + "/.", gcs_dest],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"gsutil upload failed (rc={result.returncode}): {result.stderr}")
+    print(f"[ckpt] upload complete: {gcs_dest}", flush=True)
+
+
 def save_checkpoint(
     model,
     optimizer,
@@ -166,28 +197,45 @@ def save_checkpoint(
     if not is_main:
         return
 
-    os.makedirs(save_dir, exist_ok=True)
+    # GCS destinations are written by staging to a local temp dir and then
+    # gsutil-uploading: torch.save / os.makedirs cannot write to gs://
+    # directly. (Previously a gs:// save_dir silently produced a LOCAL
+    # directory named "gs:".)
+    gcs_dest = _normalize_gcs_dest(save_dir)
+    if gcs_dest is not None:
+        import tempfile
 
-    peft_dir = os.path.join(save_dir, "peft_adapter")
+        write_dir = tempfile.mkdtemp(prefix="ckpt_")
+    else:
+        write_dir = save_dir
+    os.makedirs(write_dir, exist_ok=True)
+
+    peft_dir = os.path.join(write_dir, "peft_adapter")
     # peft_state is always pre-gathered now; use state_dict= to avoid
     # save_pretrained touching the (possibly re-sharded) model.
     model.backbone.model.save_pretrained(peft_dir, state_dict=peft_state)
 
-    torch.save(proj_state, os.path.join(save_dir, "projection.pt"))
-    torch.save(depth_state, os.path.join(save_dir, "depth_decoder.pt"))
-    torch.save(text_state, os.path.join(save_dir, "text_embed.pt"))
-    torch.save(audio_state, os.path.join(save_dir, "audio_heads.pt"))
+    torch.save(proj_state, os.path.join(write_dir, "projection.pt"))
+    torch.save(depth_state, os.path.join(write_dir, "depth_decoder.pt"))
+    torch.save(text_state, os.path.join(write_dir, "text_embed.pt"))
+    torch.save(audio_state, os.path.join(write_dir, "audio_heads.pt"))
     if model_audio_state is not None:
-        torch.save(model_audio_state, os.path.join(save_dir, "model_audio_embed.pt"))
-    torch.save(optim_state, os.path.join(save_dir, "optimizer.pt"))
+        torch.save(model_audio_state, os.path.join(write_dir, "model_audio_embed.pt"))
+    torch.save(optim_state, os.path.join(write_dir, "optimizer.pt"))
     if sched_state is not None:
-        torch.save(sched_state, os.path.join(save_dir, "scheduler.pt"))
+        torch.save(sched_state, os.path.join(write_dir, "scheduler.pt"))
 
     meta = {"step": step}
     if extra_state:
         meta.update(extra_state)
-    with open(os.path.join(save_dir, "metadata.json"), "w") as f:
+    with open(os.path.join(write_dir, "metadata.json"), "w") as f:
         json.dump(meta, f, indent=2)
+
+    if gcs_dest is not None:
+        import shutil
+
+        _gsutil_cp_into(write_dir, gcs_dest)
+        shutil.rmtree(write_dir, ignore_errors=True)
 
 
 def save_checkpoint_canonical_final(
@@ -339,6 +387,25 @@ def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:
     """
     from peft.utils.save_and_load import load_peft_weights, set_peft_model_state_dict
 
+    # GCS checkpoints are downloaded to a local temp dir first; the loaders
+    # below (torch.load / os.path.exists) are local-filesystem only.
+    gcs_src = _normalize_gcs_dest(load_dir)
+    if gcs_src is not None:
+        import subprocess
+        import tempfile
+
+        load_dir = tempfile.mkdtemp(prefix="ckpt_load_")
+        print(f"[ckpt] downloading {gcs_src}/* -> {load_dir}", flush=True)
+        result = subprocess.run(
+            ["gsutil", "-m", "cp", "-r", gcs_src.rstrip("/") + "/.", load_dir],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"gsutil download failed (rc={result.returncode}): {result.stderr}"
+            )
+
     with open(os.path.join(load_dir, "metadata.json")) as f:
         meta = json.load(f)
     step = meta["step"]
@@ -400,6 +467,25 @@ def push_checkpoint_to_hub(
 
 def prune_checkpoints(save_dir: str, keep_last: int = 5, keep_best: str | None = "best_by_val"):
     """Delete all step_* checkpoints except the last `keep_last` by step, and the best."""
+    gcs_dest = _normalize_gcs_dest(save_dir)
+    if gcs_dest is not None:
+        import subprocess
+
+        listing = subprocess.run(
+            ["gsutil", "ls", gcs_dest.rstrip("/") + "/"],
+            capture_output=True,
+            text=True,
+        )
+        step_dirs = sorted(
+            [ln.rstrip("/") for ln in listing.stdout.splitlines() if "/step_" in ln],
+            key=lambda p: int(p.rsplit("step_", 1)[1].split("/")[0]),
+        )
+        keep = set(step_dirs[-keep_last:])
+        for d in step_dirs:
+            if d not in keep:
+                subprocess.run(["gsutil", "-m", "rm", "-r", d], capture_output=True, text=True)
+        return
+
     save_dir = Path(save_dir)
     step_dirs = sorted(
         [p for p in save_dir.glob("step_*") if p.is_dir()], key=lambda p: int(p.name.split("_")[1])

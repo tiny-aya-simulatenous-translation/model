@@ -820,6 +820,20 @@ def main():
     if backend.world_size() > 1 and not is_tpu:
         num_workers = min(num_workers, 6)
 
+    # TPU note: by this point `wrap_model` has moved the model onto the
+    # XLA device, which fully initializes the TPU runtime (libtpu) in
+    # THIS process -- including libtpu's own tcmalloc and background
+    # threads. DataLoader's default `fork` start method would clone that
+    # half-initialized allocator into every worker; the first alloc/free
+    # in the child then corrupts the heap ("tcmalloc: Attempt to free
+    # invalid pointer" -> SIGABRT in the worker, surfaced to the parent
+    # at the next mark_step). Use `spawn` so workers get a clean
+    # interpreter that never inherits libtpu state. GPU keeps the default
+    # fork (no libtpu; fork is cheaper). With spawn the per-worker startup
+    # cost is real, so keep workers alive across epochs.
+    mp_context = "spawn" if (is_tpu and num_workers > 0) else None
+    use_persistent = num_workers > 0
+
     if is_tpu:
         # SPMD is single-process -- no distributed sampler
         train_sampler = None
@@ -843,7 +857,8 @@ def main():
         collate_fn=collator,
         num_workers=num_workers,
         pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
-        persistent_workers=num_workers > 0 and not is_tpu,
+        persistent_workers=use_persistent,
+        multiprocessing_context=mp_context,
         drop_last=train_drop_last,
     )
     if is_main:
@@ -863,7 +878,8 @@ def main():
             collate_fn=collator,
             num_workers=num_workers,
             pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
-            persistent_workers=num_workers > 0 and not is_tpu,
+            persistent_workers=use_persistent,
+            multiprocessing_context=mp_context,
         )
 
     # ---- mimi decoder for demos
@@ -1036,8 +1052,25 @@ def main():
     hub_token = os.environ.get("HF_TOKEN")
 
     # ---- training loop
-    save_dir = Path(cfg["logging"]["save_dir"])
-    save_dir.mkdir(parents=True, exist_ok=True)
+    # save_dir may be a gs:// URL. Do NOT wrap it in pathlib.Path -- Path
+    # collapses "gs://bucket/x" to "gs:/bucket/x", so mkdir/os.makedirs
+    # silently write to a LOCAL directory named "gs:" and save_every
+    # checkpoints never reach GCS. Keep it a str; the checkpointing helpers
+    # stage to a temp dir and gsutil-upload when the dest is gs://. Only
+    # create local destinations here.
+    save_dir = str(cfg["logging"]["save_dir"])
+    _save_is_gcs = save_dir.startswith("gs://")
+    if not _save_is_gcs:
+        Path(save_dir).mkdir(parents=True, exist_ok=True)
+
+    def _ckpt_subpath(*parts: str) -> str:
+        """Join checkpoint subpaths while preserving a gs:// prefix."""
+        return "/".join([save_dir.rstrip("/"), *[str(p).strip("/") for p in parts]])
+
+    # Audio demo WAVs cannot be written to gs:// by soundfile; keep them on
+    # local disk (they are also logged to W&B). For a local save_dir they
+    # live alongside the checkpoints.
+    _artifacts_dir = Path(save_dir) if not _save_is_gcs else Path("/tmp/tinyaya_artifacts")
 
     if train_sampler is not None:
         train_sampler.set_epoch(0)
@@ -1617,7 +1650,7 @@ def main():
                     backend=backend,
                 )
                 print(f"  demo cb0_acc={r['cb0_accuracy'] * 100:.1f}%")
-                ad = save_dir / "audio_samples" / f"step_{step:06d}"
+                ad = _artifacts_dir / "audio_samples" / f"step_{step:06d}"
                 ad.mkdir(parents=True, exist_ok=True)
                 sf.write(ad / "source.wav", r["source_wav"], 24000)
                 sf.write(ad / "target_gt.wav", r["target_gt_wav"], 24000)
@@ -1670,7 +1703,9 @@ def main():
                 wandb.log(log)
             if val["val/loss"] < best_val:
                 best_val = val["val/loss"]
-                best_dir = save_dir / "best_by_val"
+                # Validation only runs on GPU (not is_tpu), where save_dir is
+                # local; keep best_by_val as a local Path.
+                best_dir = Path(save_dir) / "best_by_val"
                 if is_main and best_dir.exists():
                     import shutil
 
@@ -1702,7 +1737,7 @@ def main():
 
         # ---- periodic save + prune
         if save_every and step % save_every == 0:
-            d = save_dir / f"step_{step:06d}"
+            d = _ckpt_subpath(f"step_{step:06d}")
             # Patch 16/17: ALL hosts enter save_checkpoint to participate
             # in the SPMD .cpu() gather; only host-0 actually writes.
             save_checkpoint(
@@ -1715,7 +1750,7 @@ def main():
                 is_main=is_main,
             )
             if is_main:
-                prune_checkpoints(str(save_dir), keep_last=3, keep_best="best_by_val")
+                prune_checkpoints(save_dir, keep_last=3, keep_best="best_by_val")
                 if push_to_hub and hub_repo_id:
                     try:
                         push_checkpoint_to_hub(
@@ -1735,7 +1770,7 @@ def main():
     # to first validate that the training loop itself reaches step 200,
     # so this gate stays even at the final-save site.
     if save_every:
-        d = save_dir / f"step_{step:06d}"
+        d = _ckpt_subpath(f"step_{step:06d}")
         save_checkpoint(
             fsdp_model,
             optimizer,
@@ -1756,7 +1791,7 @@ def main():
     if cfg["train"].get("final_canonical_save", False):
         from src.training.checkpointing import save_checkpoint_canonical_final
 
-        d_final = save_dir / f"step_{step:06d}_final"
+        d_final = _ckpt_subpath(f"step_{step:06d}_final")
         if is_main:
             print(f"\n[patch 19] entering canonical final save -> {d_final}")
         save_checkpoint_canonical_final(unwrapped, str(d_final), is_main=is_main)

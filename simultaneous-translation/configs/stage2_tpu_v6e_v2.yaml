@@ -1,0 +1,103 @@
+# TPU v6e-8 SPOT config: tr-hi-parallel-speech-v2 full training.
+#
+# WHY THIS EXISTS
+# ---------------
+# First production training on the large tr-hi-mimi-encoded corpus
+# (1,240,589 train / 65,295 val rows) -- the Mimi-encoded + aligned
+# form of tiny-aya-translate/tr-hi-parallel-speech-v2. It reuses the
+# validated opt-prod5k recipe (Phases 1+2+3) and only changes:
+#   - data paths -> the staged v2 encoded set on the VM local disk
+#   - max_steps  -> ~3 epochs (effective batch 256; ~4,850 steps/epoch)
+#   - save_every -> 1000 (CRITICAL: v6e-8 is spot/preemptible; the run
+#     MUST checkpoint to GCS so --resume auto survives a reclaim)
+#   - max_frames -> 300 (covers p95 of src+tgt length; truncates ~1.7%;
+#     ~20% cheaper/step than the prod5k value of 400)
+#
+# Validated baseline: opt-prod5k (W&B kzsijxv5) p50=6.14s/step, b=8/g=4
+# is the ONLY stable topology (b=16/g=2 NaN'd at step 130 on v6e bf16
+# reduce-scatter, pytorch/xla #8591/#8778).
+#
+# Usage (single-host v6e-8 spot, europe-west4-a):
+#   TPU_STRATEGY=fsdpv2_lora uv run python scripts/train_hierarchical.py \
+#       --config configs/stage2_tpu_v6e_v2.yaml --resume auto
+#
+# See also: docs/tpu-trc-allocation.md (TRC quotas)
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  # p50=107, p90=212, p99=321 frames for concatenated src+tgt; 300
+  # truncates only 1.7% of pairs while cutting per-step compute vs 400.
+  max_frames: 300
+  audio_frame_rate: 12.5
+  # Async data loading. On TPU the workers use the `spawn` start method
+  # (see train_hierarchical.py) so they don't inherit libtpu's non-fork-safe
+  # tcmalloc. The host has 180 vCPUs / 1.4 TB RAM; 32 spawned + persistent
+  # workers give large prefetch headroom over the ~6s step. (Not 180: each
+  # spawn worker is a full interpreter, so 1:1 would waste RAM/startup for
+  # no throughput gain on these tiny .pt reads.)
+  num_workers: 32
+  pin_memory: false
+
+# ---------------------------------------------------------------------
+# Train: single-host v6e-8 spot.
+# Effective batch = batch_size * grad_accum * 8 chips = 8 * 4 * 8 = 256.
+# 1,240,589 train rows / 256 ~= 4,846 steps/epoch.
+# max_steps=15000 ~= 3.1 epochs (cosine decay horizon). Early-stop on
+# val plateau is fine; do NOT shorten the horizon after the fact (that
+# double-decays the LR).
+# ---------------------------------------------------------------------
+train:
+  num_codebooks: 8
+  # Phase 3 confirmed: b=8/g=4 is the only viable topology under
+  # FSDPv2+bf16 on v6e-8. b=16/g=2 NaN'd at step 130.
+  batch_size: 8
+  grad_accum: 4
+  max_steps: 15000
+  warmup_steps: 500
+  # Phase 2 promoted: one compile warmup step before visible step 1.
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: true
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  # Phase 1 promoted: log_every=10 reduces host sync overhead.
+  log_every: 10
+  # CRITICAL on spot: checkpoint to GCS every 1000 steps so a
+  # preemption resumes via --resume auto instead of losing the run.
+  save_every: 1000
+  audio_every: 2000
+  val_every: 1000
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-v2
+  keep_last_n: 5
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-v2-stage2-3ep
+
+# ---------------------------------------------------------------------
+# Perf instrumentation: enabled for production monitoring.
+# ---------------------------------------------------------------------
+perf:
+  enabled: true
+  warmup_skip_steps: 50
+  xprof_trace_labels: false
