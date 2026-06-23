@@ -31,9 +31,9 @@ def create_matched_pairs(num_pairs=25):
     from datasets import load_dataset
 
     print("Loading FLEURS TR, HI, EN...")
-    tr_ds = load_dataset("google/fleurs", "tr_tr", split="train", trust_remote_code=True)
-    hi_ds = load_dataset("google/fleurs", "hi_in", split="train", trust_remote_code=True)
-    en_ds = load_dataset("google/fleurs", "en_us", split="train", trust_remote_code=True)
+    tr_ds = load_dataset("google/fleurs", "tr_tr", split="train")
+    hi_ds = load_dataset("google/fleurs", "hi_in", split="train")
+    en_ds = load_dataset("google/fleurs", "en_us", split="train")
 
     # Index by sentence ID
     tr_by_id = {s["id"]: s for s in tr_ds}

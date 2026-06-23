@@ -100,7 +100,7 @@ def main():
     print("=== Loading FLEURS English ===")
     from datasets import load_dataset
 
-    en_ds = load_dataset("google/fleurs", "en_us", split="train", trust_remote_code=True)
+    en_ds = load_dataset("google/fleurs", "en_us", split="train")
 
     # Process samples
     data_dir = Path("data/stage2")

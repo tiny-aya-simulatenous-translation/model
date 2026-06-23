@@ -29,8 +29,8 @@ def create_translation_pairs(num_pairs=25):
     from datasets import load_dataset
 
     print("Loading FLEURS Turkish and Hindi...")
-    tr_ds = load_dataset("google/fleurs", "tr_tr", split="train", trust_remote_code=True)
-    hi_ds = load_dataset("google/fleurs", "hi_in", split="train", trust_remote_code=True)
+    tr_ds = load_dataset("google/fleurs", "tr_tr", split="train")
+    hi_ds = load_dataset("google/fleurs", "hi_in", split="train")
 
     # FLEURS samples are indexed by sentence ID — same index = same sentence
     num_pairs = min(num_pairs, len(tr_ds), len(hi_ds))

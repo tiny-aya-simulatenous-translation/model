@@ -36,7 +36,7 @@ def download_fleurs(languages=("tr_tr", "hi_in"), num_samples=30):
     for lang_code in languages:
         lang_short = lang_code.split("_")[0]  # "tr" or "hi"
         print(f"\nLoading FLEURS {lang_code}...")
-        ds = load_dataset("google/fleurs", lang_code, split="train", trust_remote_code=True)
+        ds = load_dataset("google/fleurs", lang_code, split="train")
 
         for i, sample in enumerate(ds):
             if i >= num_samples:
