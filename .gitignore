@@ -63,3 +63,4 @@ runs/
 .claude/settings.local.json
 .claude/archive/.tmp-*
 .claude/hooks/__pycache__/
+phase-3-data-generation-pipeline
