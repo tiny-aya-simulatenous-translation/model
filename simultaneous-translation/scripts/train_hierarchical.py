@@ -1926,9 +1926,12 @@ def main():
                 backend=backend,
                 max_batches=cfg["logging"].get("val_max_batches"),
             )
-            if is_main:
+            # run_validation returns {} if every batch was non-finite -- a
+            # failed/empty val must never crash the training run.
+            val_ok = bool(val) and "val/loss" in val
+            if val_ok and is_main:
                 print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc'] * 100:.1f}%")
-            if use_wandb and is_main:
+            if val_ok and use_wandb and is_main:
                 import wandb
 
                 log = {k: v for k, v in val.items() if k != "val/per_codebook_loss"}
@@ -1936,7 +1939,7 @@ def main():
                     log[f"val/per_codebook_loss_{i}"] = v
                 log["global_step"] = step
                 wandb.log(log)
-            if val["val/loss"] < best_val:
+            if val_ok and val["val/loss"] < best_val:
                 best_val = val["val/loss"]
                 # Validation only runs on GPU (not is_tpu), where save_dir is
                 # local; keep best_by_val as a local Path.

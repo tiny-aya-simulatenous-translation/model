@@ -46,6 +46,14 @@ def compute_hierarchical_translation_loss(
     lm = loss_mask[:, 1:].bool()
     mask = am & lm  # [B, T-1]
     denom = mask.float().sum().clamp(min=1.0)
+    zero = torch.zeros((), device=tl.device)
+
+    def _masked_sum(ce: torch.Tensor) -> torch.Tensor:
+        # Zero out non-target positions with ``where`` (NOT ``ce * mask``):
+        # a padded position can yield ``inf`` cross-entropy, and ``inf * 0``
+        # is NaN, which would poison the whole sum even though the position
+        # is masked. ``where`` keeps masked entries at exactly 0.
+        return torch.where(mask, ce, zero).sum()
 
     B, Tm1, V_text = tl.shape
     num_cb = al.shape[1]
@@ -56,7 +64,7 @@ def compute_hierarchical_translation_loss(
         tl_flat = tl.reshape(-1, V_text)
         tt_flat = tt.reshape(-1)
         ce = F.cross_entropy(tl_flat.float(), tt_flat, reduction="none").view(B, Tm1)
-        text_loss = (ce * mask.float()).sum() / denom
+        text_loss = _masked_sum(ce) / denom
     else:
         text_loss = torch.zeros((), device=tl.device)
 
@@ -68,7 +76,7 @@ def compute_hierarchical_translation_loss(
             at[:, c].reshape(-1),
             reduction="none",
         ).view(B, Tm1)
-        per_cb.append((ce_c * mask.float()).sum() / denom)
+        per_cb.append(_masked_sum(ce_c) / denom)
     per_codebook = torch.stack(per_cb)  # [CB]
     audio_loss = per_codebook.mean()
 
