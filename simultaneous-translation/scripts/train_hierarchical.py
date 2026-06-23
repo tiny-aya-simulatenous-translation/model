@@ -569,6 +569,7 @@ def run_validation(
     per_cb_sum = torch.zeros(num_codebooks, device=device)
     cb0_correct = torch.zeros((), device=device)
     cb0_total = torch.zeros((), device=device)
+    n_finite = torch.zeros((), device=device)
     n = 0
     for batch in val_loader:
         if max_batches is not None and n >= max_batches:
@@ -615,10 +616,19 @@ def run_validation(
                 text_weight=loss_cfg["text_weight"],
                 audio_weight=loss_cfg["audio_weight"],
             )
-        acc_loss = acc_loss + losses["loss"].detach()
-        acc_text = acc_text + losses["text_loss"].detach()
-        acc_audio = acc_audio + losses["audio_loss"].detach()
-        per_cb_sum = per_cb_sum + losses["per_codebook_loss"].detach()
+        # Finite-guarded accumulation: a degenerate val batch (e.g. all-pad,
+        # loss_mask.sum()==0) makes the loss-fn normalisation divide by zero
+        # -> NaN, which would poison the whole pass. Skip such batches via a
+        # device-side mask (no host sync) and divide by the finite count.
+        bl = losses["loss"].detach()
+        finite = torch.isfinite(bl)
+        zero = torch.zeros_like(bl)
+        acc_loss = acc_loss + torch.where(finite, bl, zero)
+        acc_text = acc_text + torch.where(finite, losses["text_loss"].detach(), zero)
+        acc_audio = acc_audio + torch.where(finite, losses["audio_loss"].detach(), zero)
+        pcb = losses["per_codebook_loss"].detach()
+        per_cb_sum = per_cb_sum + torch.where(finite, pcb, torch.zeros_like(pcb))
+        n_finite = n_finite + finite.to(acc_loss.dtype)
 
         # cb0 teacher-forced acc on target positions (shifted next-token).
         # Static-shape masked reduction -- NO boolean indexing (which
@@ -647,12 +657,19 @@ def run_validation(
         per_cb_sum = backend.reduce_mean(per_cb_sum) * ws
         cb0_correct = backend.reduce_mean(cb0_correct) * ws
         cb0_total = backend.reduce_mean(cb0_total) * ws
+        n_finite = backend.reduce_mean(n_finite) * ws
 
-    inv = 1.0 / n
     # Single host-sync point for the whole validation pass.
     cc = float(cb0_correct.item())
     ct = float(cb0_total.item())
+    nf = float(n_finite.item())
     model.train()
+    if nf == 0:
+        print(f"  [val] WARNING: all {n} val batches produced non-finite loss", flush=True)
+        return {}
+    if nf < n:
+        print(f"  [val] skipped {n - int(nf)}/{n} non-finite val batches", flush=True)
+    inv = 1.0 / nf
     return {
         "val/loss": (acc_loss * inv).item(),
         "val/text_loss": (acc_text * inv).item(),
