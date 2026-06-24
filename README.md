@@ -69,8 +69,8 @@ Key design choices:
 ### Setup
 
 ```bash
-git clone https://github.com/tiny-aya-simulatenous-translation/tinyaya-stage2-scale.git
-cd tinyaya-stage2-scale
+git clone https://github.com/tiny-aya-simulatenous-translation/model.git
+cd model
 uv sync
 ```
 
@@ -146,7 +146,7 @@ This tests: train → save → verify sizes → load → forward → resume → 
 
 ## Related Repos
 
-- [`phase-3-data-generation-pipeline`](https://github.com/tiny-aya-simulatenous-translation/phase-3-data-generation-pipeline) — TTS generation, deployment, Mimi encoding
+- [`data-pipeline`](https://github.com/tiny-aya-simulatenous-translation/data-pipeline) — TTS generation, deployment, Mimi encoding
 - [`sound-quality-check`](https://github.com/tiny-aya-simulatenous-translation/sound-quality-check) — 4-stage audio QC pipeline
 
 ## License
