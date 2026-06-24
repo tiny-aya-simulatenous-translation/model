@@ -75,6 +75,12 @@ train:
 loss:
   text_weight: 0.1
   audio_weight: 1.0
+  # Padding-aware text weighting: the interleaved target text is ~60% special
+  # padding tokens (mean-init lm_head rows, ~unlearnable). Down-weight them so
+  # the text loss focuses on real tokens instead of freezing at ~ln(V).
+  # (sweep candidate — see sweeps/sweep_stage2.yaml)
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
 
 optim:
   lr_lora: 1.5e-4

@@ -25,17 +25,25 @@ expensive slot.
 
 ---
 
-## Phase 0 — Triage the text stream (DO FIRST; blocks everything)
-The text/inner-monologue CE sits at ≈ln(V) = random. Research says this is a
-data/recipe bug, not capacity. Until it's understood, a 22 h run is wasted.
-- [ ] Add a one-shot debug: compute text CE on one batch at startup; if
-      ≈ln(V), dump a few (text_ids, loss_mask) rows.
-- [ ] 100–300-step **text-only** probe (audio_weight=0) — does text CE drop?
-- [ ] Check per-group grad norm of `text_embed`/lm-head path (Phase 2 metric).
-- [ ] Likely fixes to trial: raise `loss.text_weight` 0.1→~1.0; LoRA/unfreeze
-      the (currently frozen) `lm_head`; verify the interleaver isn't filling
-      ~all target frames with `TEXT_PADDING` (262144).
-- **DoD:** text CE moves, or the exact pipeline defect is written down.
+## Phase 0 — Triage the text stream  ✅ ROOT-CAUSED + FIXED (TPU confirm pending)
+**Root cause (empirically verified on the train split, 2026-06-24):** the
+supervised target text is **38% real tokens / 62% special padding tokens**
+(IN_WORD 35% + END_OF_TEXT 15% + TEXT_PADDING 11%; 0% zero_padding — so real
+HI/TR text IS present, every row). The padding specials (262144–262147) have
+**mean-initialised, ~frozen lm_head rows**. Stage-2's hierarchical loss weighted
+them EQUALLY with real tokens (uniform `_masked_sum`), so the un-learnable
+padding pinned text CE at ~ln(V) and drowned out the real tokens. **It was a
+regression** — Stage-1 (`src/training/loss.py`) down-weights padding 100×.
+- [x] Confirmed real text present (not missing-alignments) via CPU data probe.
+- [x] **Fix:** ported padding-aware weighting into `translation_loss.py`
+      (`text_padding_weight=0.01`, `zero_padding_weight=0.0`); plumbed through
+      both call sites + configs; numerically verified (uniform 7.61 →
+      weighted 2.13, real-token-focused, finite).
+- [ ] Confirm on TPU that train/val text CE actually drops (rides next smoke).
+- [ ] (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+      consider making the new-token lm_head rows trainable for END_OF_TEXT etc.
+- **DoD:** ✅ exact defect documented + fix verified at loss level. Live TPU
+  drop is the final tick (Phase 4 smoke).
 
 ## Phase 1 — Capacity / recipe bug fixes
 - [ ] Fix `get_param_groups`: the `full_ft` group (layers 34–35) is EMPTY at

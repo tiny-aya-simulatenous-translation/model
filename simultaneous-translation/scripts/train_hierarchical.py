@@ -670,6 +670,8 @@ def run_validation(
                 loss_mask,
                 text_weight=loss_cfg["text_weight"],
                 audio_weight=loss_cfg["audio_weight"],
+                text_padding_weight=loss_cfg.get("text_padding_weight", 0.01),
+                zero_padding_weight=loss_cfg.get("zero_padding_weight", 0.0),
             )
             # First-batch NaN localization (one host sync; diagnostic only).
             # Pinpoints whether the non-finite originates in the backbone
@@ -1375,6 +1377,8 @@ def main():
     val_every = cfg["logging"]["val_every"]
     text_w = cfg["loss"]["text_weight"]
     audio_w = cfg["loss"]["audio_weight"]
+    text_pad_w = cfg["loss"].get("text_padding_weight", 0.01)
+    zero_pad_w = cfg["loss"].get("zero_padding_weight", 0.0)
     perf_cfg = cfg.get("perf", {})
     perf_enabled = bool(perf_cfg.get("enabled", False))
     perf_warmup_skip_steps = int(perf_cfg.get("warmup_skip_steps", 50))
@@ -1588,6 +1592,8 @@ def main():
                             loss_mask,
                             text_weight=text_w,
                             audio_weight=audio_w,
+                            text_padding_weight=text_pad_w,
+                            zero_padding_weight=zero_pad_w,
                         )
                 loss = losses["loss"] / grad_accum
                 with trace_ctx("backward"):

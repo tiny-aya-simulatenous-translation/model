@@ -26,6 +26,97 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-24T05:53:32Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.claude/PLAN.md`
+
+
+## 2026-06-24T05:52:24Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/test_text_loss.py`
+
+
+## 2026-06-24T05:51:39Z | feat/training-metrics-sweeps@0b23640 | done | edit
+created `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/test_text_loss.py`
+
+
+## 2026-06-24T05:51:14Z | feat/training-metrics-sweeps@0b23640 | done | exec
+\
+
+
+## 2026-06-24T05:50:46Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_valfix_smoke.yaml`
+
+
+## 2026-06-24T05:50:40Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_v2.yaml`
+
+
+## 2026-06-24T05:49:41Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T05:49:24Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T05:49:17Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T05:48:40Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/translation_loss.py`
+
+
+## 2026-06-24T05:47:54Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/training/translation_loss.py`
+
+
+## 2026-06-24T05:44:27Z | feat/training-metrics-sweeps@0b23640 | done | exec
+SC=/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad && \
+
+
+## 2026-06-24T05:42:13Z | feat/training-metrics-sweeps@0b23640 | done | edit
+created `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/inspect_text.py`
+
+
+## 2026-06-24T05:31:53Z | feat/training-metrics-sweeps@0b23640 | fail | verify
+verify: 9 passed, 3 failed out of 12 on Stop
+
+FAIL [1] # every AGENTS.md tier exists and is non-empty
+    EMPTY: phase-3-data-generation-pipeline/AGENTS.md
+FAIL [123] # all Python source compiles
+    py_compile.py: error: the following arguments are required: filenames
+FAIL [2] # CLI entry point loads and prints help
+    python3: can't open file '/home/cataluna84/Workspace/tinyaya-stage2-scale/phase-3-data-generation-pipeline/cli.py': [Errno 2] No such file or directory
+
+
+## 2026-06-24T05:31:25Z | feat/training-metrics-sweeps@0b23640 | done | edit
+edited `/home/cataluna84/.claude/projects/-home-cataluna84-Workspace-tinyaya-stage2-scale/memory/MEMORY.md`
+
+
+## 2026-06-24T05:31:06Z | feat/training-metrics-sweeps@0b23640 | done | exec
+\
+
+
+## 2026-06-24T05:30:34Z | feat/training-metrics-sweeps@0b23640 | done | exec
+\
+
+
+## 2026-06-24T05:30:15Z | feat/training-metrics-sweeps@f1022fc | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/.claude/PLAN.md`
+
+
+## 2026-06-24T05:28:05Z | feat/training-metrics-sweeps@f1022fc | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/sweeps/README.md`
+
+
+## 2026-06-24T05:27:43Z | feat/training-metrics-sweeps@f1022fc | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/sweeps/sweep_stage2.yaml`
+
+
+## 2026-06-24T05:22:41Z | feat/training-metrics-sweeps@f1022fc | done | exec
+\
+
+
 ## 2026-06-24T05:22:30Z | feat/training-metrics-sweeps@74d0151 | done | exec
 \
 
