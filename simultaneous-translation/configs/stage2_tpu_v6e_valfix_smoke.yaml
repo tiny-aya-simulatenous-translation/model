@@ -1,0 +1,71 @@
+# TPU v6e inline-validation NaN-fix smoke config.
+#
+# WHY THIS EXISTS
+# ---------------
+# Confirms whether the three inline-TPU-val fixes make val/loss FINITE:
+#   1. XLA_NO_SPECIAL_SCALARS=1   (set in launch_release.sh env)
+#   2. @torch.no_grad() on run_validation
+#   3. trustworthy (post-mark_step .item()) val_debug probe
+# Runs val every 2 steps over 5 batches with val_on_tpu + val_debug ON,
+# stops after a handful of steps. ~40 min incl. the cold XLA compile.
+# Success = `[val-debug] finite: ... loss=True` AND a real `val/loss=` line
+# (NOT "all N val batches produced non-finite loss"). If finite, flip
+# logging.val_on_tpu -> true in the production config.
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 400
+  audio_frame_rate: 12.5
+  num_workers: 4
+  pin_memory: false
+
+train:
+  num_codebooks: 8
+  batch_size: 8
+  grad_accum: 4
+  max_steps: 6
+  warmup_steps: 6
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  fsdp_barrier_hook: false
+  depth_chunk_size: 32
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: false
+
+loss:
+  text_weight: 0.1
+  audio_weight: 1.0
+
+optim:
+  lr_lora: 1.5e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 1
+  save_every: 0
+  audio_every: 1000
+  val_every: 2
+  val_max_batches: 5
+  # The whole point of this smoke: exercise inline TPU validation.
+  val_on_tpu: true
+  val_debug: true
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-valfix-smoke
+  keep_last_n: 2
+  use_wandb: false
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-valfix-smoke
+
+perf:
+  enabled: true
+  warmup_skip_steps: 2
+  xprof_trace_labels: false

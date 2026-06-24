@@ -197,6 +197,7 @@ tmux new-session -d -s "$TMUX_SESSION" "
     XLA_USE_BF16=0 \
     XLA_DOWNCAST_BF16=0 \
     XLA_DISABLE_FUNCTIONALIZATION=0 \
+    XLA_NO_SPECIAL_SCALARS=1 \
     LIBTPU_INIT_ARGS='--megascale_grpc_enable_xor_tracer=false --xla_tpu_enable_flash_attention=false' \
     PT_XLA_DEBUG_LEVEL=1 \
     XLA_PROFILER_PORT=9012 \

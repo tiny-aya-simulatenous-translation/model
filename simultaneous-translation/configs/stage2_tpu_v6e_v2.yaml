@@ -95,6 +95,12 @@ logging:
   # TPU-safe validation (item #1): cap each periodic val pass to N batches
   # to bound cost. 50 batches * (b=8 * 8 chips) ~= 3,200 val samples.
   val_max_batches: 50
+  # Inline TPU validation: VERIFIED finite on 2026-06-24 (val/loss=9.1709 at
+  # step 2) once the launcher sets XLA_NO_SPECIAL_SCALARS=1 (disables XLA's
+  # assume-no-NaN/Inf rewrites that previously elided the loss guards) +
+  # the nan_to_num guard in translation_loss._masked_sum. Perf caveat: the
+  # flag turns off one XLA optimization, a small per-step cost over 22 h.
+  val_on_tpu: true
   save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-v2
   keep_last_n: 5
   use_wandb: true

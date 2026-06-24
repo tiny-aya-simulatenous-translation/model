@@ -113,6 +113,7 @@ cd "$REPO_DIR/simultaneous-translation"
 echo "[\$(date -Is)] launching train_hierarchical.py [strategy=$TPU_STRATEGY]" | tee -a /tmp/train.log
 DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
 XLA_DISABLE_FUNCTIONALIZATION=0 \
+XLA_NO_SPECIAL_SCALARS=1 \
 TPU_STRATEGY=$TPU_STRATEGY \
 LD_LIBRARY_PATH="$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}" \
 HF_TOKEN="$HF_TOKEN" \

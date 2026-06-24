@@ -53,7 +53,15 @@ def compute_hierarchical_translation_loss(
         # a padded position can yield ``inf`` cross-entropy, and ``inf * 0``
         # is NaN, which would poison the whole sum even though the position
         # is masked. ``where`` keeps masked entries at exactly 0.
-        return torch.where(mask, ce, zero).sum()
+        masked = torch.where(mask, ce, zero)
+        # Defense-in-depth for the inline-TPU-val NaN: drop any non-finite that
+        # still leaks into a target position so one bad element can't NaN the
+        # whole val metric. NOTE: this (and the ``where`` above) only actually
+        # fire when XLA is NOT assuming finiteness -- the launchers set
+        # ``XLA_NO_SPECIAL_SCALARS=1`` so the assume-no-NaN/Inf algebraic
+        # rewrites that previously elided these guards stay off.
+        masked = torch.nan_to_num(masked, nan=0.0, posinf=0.0, neginf=0.0)
+        return masked.sum()
 
     B, Tm1, V_text = tl.shape
     num_cb = al.shape[1]

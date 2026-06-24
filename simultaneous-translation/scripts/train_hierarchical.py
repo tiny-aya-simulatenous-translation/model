@@ -596,6 +596,10 @@ def run_validation(
     max_batches=None,
     val_debug=False,
 ) -> dict:
+    # @torch.no_grad() (above): val needs no gradients; this was already in
+    # place, so the autograd-tape graph theory is NOT the residual cause.
+    # The genuinely new lever for the inline-TPU-val NaN is the launcher's
+    # XLA_NO_SPECIAL_SCALARS=1 (disables XLA's assume-no-NaN/Inf rewrites).
     model.eval()
     # Audit item #1: TPU-safe validation. All reductions stay as on-device
     # accumulator tensors (no per-batch .item()/.any()/boolean-indexing),
@@ -670,13 +674,23 @@ def run_validation(
             # First-batch NaN localization (one host sync; diagnostic only).
             # Pinpoints whether the non-finite originates in the backbone
             # (hidden -> attention/mask), the heads (logits), or the loss.
+            # IMPORTANT: a pre-sync ``isfinite().all()`` is an UNRELIABLE probe
+            # on XLA -- it can read a different materialization than the
+            # accumulator's later host transfer (pytorch/xla#1665, #2516), which
+            # is exactly what misled the previous debug session. Force the
+            # forward+loss to actually execute (mark_step) and read on host
+            # via .item() so this line reflects the same value the accumulator
+            # will see.
             if n == 0 and val_debug:
+                if is_tpu:
+                    _xm.mark_step()
+                fin = lambda t: bool(torch.isfinite(t).all().item())
                 print(
                     "  [val-debug] finite: "
-                    f"hidden={bool(torch.isfinite(hidden).all())} "
-                    f"text_logits={bool(torch.isfinite(text_logits).all())} "
-                    f"audio_logits={bool(torch.isfinite(audio_logits).all())} "
-                    f"loss={bool(torch.isfinite(losses['loss']).all())}",
+                    f"hidden={fin(hidden)} "
+                    f"text_logits={fin(text_logits)} "
+                    f"audio_logits={fin(audio_logits)} "
+                    f"loss={fin(losses['loss'])}",
                     flush=True,
                 )
         # Finite-guarded accumulation: a degenerate val batch (e.g. all-pad,

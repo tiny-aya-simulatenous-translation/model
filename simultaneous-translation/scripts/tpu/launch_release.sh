@@ -28,8 +28,13 @@ GCS_PREFIX="${GCS_LOG_PREFIX:-gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e
 LIBPYTHON_DIR="$(dirname "$(find "$HOME/.local/share/uv/python" -name "libpython3.12.so.1.0" -type f 2>/dev/null | head -1)")"
 echo "[release] $(date -Is) start; GIT_SHA=$GIT_SHA dirty=$GIT_DIRTY config=$CONFIG" | tee "$LOG"
 
+# XLA_NO_SPECIAL_SCALARS=1 disables XLA's "assume no NaN/Inf" (special-scalar)
+# optimization, which is the suspected cause of the inline-TPU-val NaN: a
+# finite forward whose loss scalar materialises non-deterministically NaN
+# under NaN-unsafe algebraic rewrites. See docs + pytorch/xla#1665.
 DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
 XLA_DISABLE_FUNCTIONALIZATION=0 \
+XLA_NO_SPECIAL_SCALARS=1 \
 LIBTPU_INIT_ARGS="--megascale_grpc_enable_xor_tracer=false --xla_tpu_enable_flash_attention=false" \
 TPU_STRATEGY=fsdpv2_lora \
 WANDB_RESUME=allow \
