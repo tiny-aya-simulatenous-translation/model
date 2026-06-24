@@ -22,6 +22,7 @@ import torch
 
 # Must match TinyAyaBackbone special tokens
 ZERO_PADDING = 262146
+SILENCE_TOKEN = 2048  # audio_vocab_size; pads the parallel-stream audio codes
 
 
 class InterleavedCollator:
@@ -109,5 +110,21 @@ class InterleavedCollator:
                 T = min(item["loss_mask"].shape[0], max_len)
                 loss_mask[i, :T] = item["loss_mask"][:T]
             result["loss_mask"] = loss_mask
+
+        # Parallel two-stream codes (Moshi-style). The dataset builds these
+        # (user = source+silence, model = silence+target, with codebook delay)
+        # but WITHOUT passing them here the training/val forward fell back to
+        # single-stream mode -- model_audio_embed was never called (grad 0.00).
+        # Pad like audio_codes, with SILENCE in the padding so the forward's
+        # is-silence handling stays correct.
+        for key in ("user_audio_codes", "model_audio_codes"):
+            if key in batch[0]:
+                stream = torch.full(
+                    (B, num_codebooks, max_len), SILENCE_TOKEN, dtype=torch.long
+                )
+                for i, item in enumerate(batch):
+                    T = min(item[key].shape[1], max_len)
+                    stream[i, :, :T] = item[key][:num_codebooks, :T]
+                result[key] = stream
 
         return result
