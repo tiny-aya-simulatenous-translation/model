@@ -486,7 +486,11 @@ def get_param_groups(model, optim_cfg):
             groups["text_embed"]["params"].append(param)
         elif "lora_" in name or "lora_embedding" in name:
             groups["lora"]["params"].append(param)
-        elif any(f"layers.{i}." in name for i in range(34, 36)):
+        elif ".layers." in name:
+            # An unfrozen backbone transformer-layer base weight (top-N
+            # full-FT). depth/projection/embed/lora are handled above, so any
+            # remaining ".layers." param is a fully-fine-tuned backbone block.
+            # Index-agnostic so it tracks lora.num_full_ft_layers for any N.
             groups["full_ft"]["params"].append(param)
         else:
             groups["lora"]["params"].append(param)
@@ -870,7 +874,14 @@ def main():
         use_scan_layers=use_scan,
         xla_grad_checkpoint=use_xla_ckpt,
     )
-    model.backbone = apply_lora(model.backbone, r=16)
+    _lora_cfg = cfg.get("lora", {})
+    model.backbone = apply_lora(
+        model.backbone,
+        r=_lora_cfg.get("r", 16),
+        lora_alpha=_lora_cfg.get("alpha", 32),
+        target_modules=_lora_cfg.get("target_modules", ["q_proj", "v_proj", "embed_tokens"]),
+        num_full_ft_layers=_lora_cfg.get("num_full_ft_layers", 0),
+    )
     freeze_depth_internals(model)
     for p in model.projection.parameters():
         p.requires_grad = True

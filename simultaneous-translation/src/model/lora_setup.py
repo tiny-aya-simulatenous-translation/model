@@ -17,6 +17,8 @@ trainable count to ~274M (5.3%); the rest of the per-chip HBM budget
 is then dominated by activations, which ``scan_utils`` controls.
 """
 
+import re
+
 import torch.nn as nn
 from peft import LoraConfig, TaskType, get_peft_model
 
@@ -44,22 +46,44 @@ class LoRAEmbedding(nn.Module):
         return self.base_embed.weight
 
 
-def apply_lora(backbone, r=16, lora_alpha=32, num_full_ft_layers=2):
-    """Apply LoRA to TinyAya backbone.
+def apply_lora(
+    backbone,
+    r=16,
+    lora_alpha=32,
+    target_modules=None,
+    num_full_ft_layers=0,
+):
+    """Apply LoRA to the TinyAya backbone (config-driven; sweepable).
 
     Strategy:
-    - LoRA on q_proj, v_proj, embed_tokens for layers 0..N-num_full_ft_layers
-      (embed_tokens is at model root, unaffected by layers_to_transform)
-    - Full fine-tuning on last num_full_ft_layers layers
-    - text_embed wrapped with LoRAEmbedding (frozen base + adapter)
+    - LoRA (rank ``r``, scale ``lora_alpha``) on ``target_modules``. When
+      ``num_full_ft_layers > 0`` the LoRA layers are 0..N-num_full_ft_layers
+      and the top ``num_full_ft_layers`` transformer blocks are FULLY
+      fine-tuned instead; when 0 (default) every layer gets LoRA.
+    - ``text_embed`` wrapped with ``LoRAEmbedding`` (frozen base + adapter).
+    - ``audio_heads`` always trainable.
+
+    ``num_full_ft_layers`` is an OPT-IN capacity lever (sweep candidate). It is
+    OFF by default: each unfrozen block adds its full param + AdamW state (~78M
+    + optimiser on a 36-layer/2048-hidden backbone), which strains the v6e-8
+    HBM budget (production peaks ~26/31 GB at the LoRA-only ~122M surface). The
+    unfreeze is module-based (not param-name string matching) and asserts it
+    actually took effect, so it can never silently no-op.
     """
-    num_layers = backbone.model.config.num_hidden_layers  # 36
-    lora_layers = list(range(num_layers - num_full_ft_layers))  # [0..33]
+    if target_modules is None:
+        target_modules = ["q_proj", "v_proj", "embed_tokens"]
+    target_modules = list(target_modules)
+
+    num_layers = backbone.model.config.num_hidden_layers
+    # layers_to_transform=None => LoRA on ALL layers.
+    lora_layers = (
+        list(range(num_layers - num_full_ft_layers)) if num_full_ft_layers > 0 else None
+    )
 
     lora_config = LoraConfig(
         r=r,
         lora_alpha=lora_alpha,
-        target_modules=["q_proj", "v_proj", "embed_tokens"],
+        target_modules=target_modules,
         layers_to_transform=lora_layers,
         bias="none",
         task_type=TaskType.CAUSAL_LM,
@@ -67,12 +91,23 @@ def apply_lora(backbone, r=16, lora_alpha=32, num_full_ft_layers=2):
 
     backbone.model = get_peft_model(backbone.model, lora_config)
 
-    # Unfreeze last N layers
-    for name, param in backbone.model.named_parameters():
-        for layer_idx in range(num_layers - num_full_ft_layers, num_layers):
-            if f"layers.{layer_idx}." in name:
-                param.requires_grad = True
-                break
+    # Full fine-tune the top ``num_full_ft_layers`` blocks. Operate on the
+    # layer MODULE objects (robust to PEFT name-mangling), then assert a
+    # non-zero count so an enabled unfreeze can't silently fail.
+    unfrozen = 0
+    if num_full_ft_layers > 0:
+        targets = set(range(num_layers - num_full_ft_layers, num_layers))
+        for mod_name, module in backbone.model.named_modules():
+            m = re.fullmatch(r".*\.layers\.(\d+)", mod_name)
+            if m and int(m.group(1)) in targets:
+                for p in module.parameters(recurse=True):
+                    if not p.requires_grad:
+                        p.requires_grad = True
+                        unfrozen += p.numel()
+        assert unfrozen > 0, (
+            f"num_full_ft_layers={num_full_ft_layers} but unfroze 0 params "
+            f"(layer-module match failed for {num_layers}-layer backbone)"
+        )
 
     # Wrap text_embed with LoRA adapter (frozen base + trainable low-rank)
     backbone.text_embed = LoRAEmbedding(backbone.text_embed, r=r, alpha=lora_alpha)
@@ -81,6 +116,10 @@ def apply_lora(backbone, r=16, lora_alpha=32, num_full_ft_layers=2):
     for param in backbone.audio_heads.parameters():
         param.requires_grad = True
 
+    print(
+        f"[lora] r={r} alpha={lora_alpha} targets={target_modules} "
+        f"num_full_ft_layers={num_full_ft_layers} (+{unfrozen / 1e6:.1f}M full-FT)"
+    )
     backbone.model.print_trainable_parameters()
     return backbone
 

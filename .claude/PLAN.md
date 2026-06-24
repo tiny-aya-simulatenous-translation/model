@@ -45,15 +45,22 @@ regression** — Stage-1 (`src/training/loss.py`) down-weights padding 100×.
 - **DoD:** ✅ exact defect documented + fix verified at loss level. Live TPU
   drop is the final tick (Phase 4 smoke).
 
-## Phase 1 — Capacity / recipe bug fixes
-- [ ] Fix `get_param_groups`: the `full_ft` group (layers 34–35) is EMPTY at
-      runtime — the `layers.{34,35}` name match fails. Make top-N unfreeze
-      actually populate, or delete the path intentionally.
-- [ ] Make LoRA rank/targets configurable from cfg (`lora.r`, `lora.alpha`,
-      `lora.target_modules`) so the sweep can vary them (currently hard-coded
-      r=16, q/v/embed in `lora_setup.apply_lora`).
-- **DoD:** param-group printout shows the intended trainable surface; rank +
-  targets driven by config.
+## Phase 1 — Capacity / recipe bug fixes  ✅ DONE
+- [x] Diagnosed the empty `full_ft`: the unfreeze LOGIC is fine — a VM probe
+      showed it lifts trainable 3.62M→159.86M (layers 34–35, +156M). The live
+      no-op was downstream/effectively-off, NOT a broken match. Decision: keep
+      top-N full-FT OFF by default (each block adds ~78M + AdamW state; v6e-8
+      HBM is thin at ~26/31 GB), make it a robust opt-in lever.
+- [x] `apply_lora` is now **config-driven** (`lora.r`, `lora.alpha`,
+      `lora.target_modules`, `lora.num_full_ft_layers`) — sweep-ready. The
+      top-N unfreeze is **module-based + asserts** it took effect (no silent
+      no-op). `get_param_groups` full-FT detection is now index-agnostic
+      (`.layers.`), so it tracks any `num_full_ft_layers`.
+- [x] Added the `lora:` block to prod + smoke configs (default
+      `num_full_ft_layers: 0`).
+- **DoD:** ✅ rank/targets/full-FT config-driven; param-group printout +
+  apply_lora `[lora]` line show the realized surface; enabling full-FT now
+  populates `full_ft` (asserted). Live TPU re-confirm rides the next smoke.
 
 ## Phase 2 — Stability dashboard (8 metrics, on-device)
 Implement in the existing `running_xla` accumulator pattern in

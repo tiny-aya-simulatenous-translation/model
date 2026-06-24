@@ -26,6 +26,121 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-24T08:58:53Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.claude/PLAN.md`
+
+
+## 2026-06-24T08:58:07Z | feat/training-metrics-sweeps@636c667 | done | exec
+\
+
+
+## 2026-06-24T08:57:04Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_valfix_smoke.yaml`
+
+
+## 2026-06-24T08:56:53Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/configs/stage2_tpu_v6e_v2.yaml`
+
+
+## 2026-06-24T08:56:30Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T08:56:11Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T08:55:52Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/model/lora_setup.py`
+
+
+## 2026-06-24T08:54:18Z | feat/training-metrics-sweeps@636c667 | info | session
+SessionEnd (resume): 24 item(s) carried forward
+
+Next steps:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- Confirm on TPU that train/val text CE actually drops (rides next smoke).
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Fix `get_param_groups`: the `full_ft` group (layers 34–35) is EMPTY at
+
+
+## 2026-06-24T06:11:35Z | feat/training-metrics-sweeps@636c667 | info | session
+SessionEnd (other): 24 item(s) carried forward
+
+Next steps:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- Confirm on TPU that train/val text CE actually drops (rides next smoke).
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Fix `get_param_groups`: the `full_ft` group (layers 34–35) is EMPTY at
+
+
+## 2026-06-24T06:10:48Z | feat/training-metrics-sweeps@636c667 | info | session
+SessionEnd (resume): 24 item(s) carried forward
+
+Next steps:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- Confirm on TPU that train/val text CE actually drops (rides next smoke).
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Fix `get_param_groups`: the `full_ft` group (layers 34–35) is EMPTY at
+
+
+## 2026-06-24T06:10:34Z | feat/training-metrics-sweeps@636c667 | info | session
+SessionEnd (prompt_input_exit): 24 item(s) carried forward
+
+Next steps:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- Confirm on TPU that train/val text CE actually drops (rides next smoke).
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Fix `get_param_groups`: the `full_ft` group (layers 34–35) is EMPTY at
+
+
+## 2026-06-24T06:10:02Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/src/model/lora_setup.py`
+
+
+## 2026-06-24T06:01:50Z | feat/training-metrics-sweeps@636c667 | done | exec
+SC=/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad && \
+
+
+## 2026-06-24T06:01:20Z | feat/training-metrics-sweeps@636c667 | done | edit
+created `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/diag_full_ft.py`
+
+
+## 2026-06-24T05:55:03Z | feat/training-metrics-sweeps@636c667 | fail | verify
+verify: 9 passed, 3 failed out of 12 on Stop
+
+FAIL [1] # every AGENTS.md tier exists and is non-empty
+    EMPTY: phase-3-data-generation-pipeline/AGENTS.md
+FAIL [123] # all Python source compiles
+    py_compile.py: error: the following arguments are required: filenames
+FAIL [2] # CLI entry point loads and prints help
+    python3: can't open file '/home/cataluna84/Workspace/tinyaya-stage2-scale/phase-3-data-generation-pipeline/cli.py': [Errno 2] No such file or directory
+
+
+## 2026-06-24T05:54:12Z | feat/training-metrics-sweeps@636c667 | done | edit
+edited `/home/cataluna84/.claude/projects/-home-cataluna84-Workspace-tinyaya-stage2-scale/memory/stage2-capacity-and-metrics-plan.md`
+
+
+## 2026-06-24T05:53:52Z | feat/training-metrics-sweeps@636c667 | done | exec
+git add .claude/PLAN.md .claude/PROGRESS.md \
+
+
 ## 2026-06-24T05:53:32Z | feat/training-metrics-sweeps@0b23640 | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.claude/PLAN.md`
 
