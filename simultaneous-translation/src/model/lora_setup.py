@@ -118,6 +118,16 @@ def apply_lora(
     # Wrap text_embed with LoRA adapter (frozen base + trainable low-rank)
     backbone.text_embed = LoRAEmbedding(backbone.text_embed, r=r, alpha=lora_alpha)
 
+    # Wrap model_audio_embed the SAME way. As a plain nn.Embedding its gradient
+    # is sparse and effectively vanished on TPU/bf16/FSDP (read ~0 by the
+    # stability dashboard, while text_embed -- LoRA-wrapped, dense lora_B -- and
+    # the dense Linears all read fine). Mirroring text_embed gives it a dense
+    # lora_B so it both LEARNS and is observable on TPU, with the Moshi-init
+    # table preserved as the frozen base.
+    backbone.model_audio_embed = LoRAEmbedding(
+        backbone.model_audio_embed, r=r, alpha=lora_alpha
+    )
+
     # Ensure audio_heads are trainable
     for param in backbone.audio_heads.parameters():
         param.requires_grad = True
