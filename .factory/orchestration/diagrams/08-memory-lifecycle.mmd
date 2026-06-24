@@ -1,9 +1,0 @@
-flowchart LR
-    E[Experiment] --> A[Artifacts]
-    A --> P[Progress]
-    P --> D{Durable?}
-    D -->|yes| M[Memories]
-    D -->|no| P
-    M --> PL[Plan]
-    PL --> V[Verify]
-    V --> P
