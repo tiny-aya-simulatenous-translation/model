@@ -26,6 +26,33 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-24T11:29:42Z | feat/training-metrics-sweeps@4728d4e | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale && \
+
+
+## 2026-06-24T11:22:46Z | feat/training-metrics-sweeps@4728d4e | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T11:21:54Z | feat/training-metrics-sweeps@4728d4e | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/simultaneous-translation/scripts/train_hierarchical.py`
+
+
+## 2026-06-24T11:19:34Z | feat/training-metrics-sweeps@4728d4e | fail | verify
+verify: 9 passed, 3 failed out of 12 on Stop
+
+FAIL [1] # every AGENTS.md tier exists and is non-empty
+    EMPTY: phase-3-data-generation-pipeline/AGENTS.md
+FAIL [123] # all Python source compiles
+    py_compile.py: error: the following arguments are required: filenames
+FAIL [2] # CLI entry point loads and prints help
+    python3: can't open file '/home/cataluna84/Workspace/tinyaya-stage2-scale/phase-3-data-generation-pipeline/cli.py': [Errno 2] No such file or directory
+
+
+## 2026-06-24T11:19:10Z | feat/training-metrics-sweeps@4728d4e | done | exec
+\
+
+
 ## 2026-06-24T11:18:48Z | feat/training-metrics-sweeps@e689e3a | done | edit
 edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/.claude/PLAN.md`
 

@@ -2062,6 +2062,25 @@ def main():
                     f"grad {grad_norm:.3f} | {step_time:.2f}s/step | "
                     f"peak {peak_gb:.1f}G | host_rss {host_rss_gb:.1f}G"
                 )
+                # Compact stability-dashboard line (visible in the log even when
+                # W&B is off; full series go to diag/* in W&B).
+                if diag_log:
+                    _gn = " ".join(
+                        f"{k.rsplit('/', 1)[1]}={diag_log[k]:.2f}"
+                        for k in sorted(diag_log)
+                        if k.startswith("diag/grad_norm/")
+                    )
+                    _nf = sum(
+                        v for k, v in diag_log.items()
+                        if k.startswith("diag/nonfinite_grads/")
+                    )
+                    print(
+                        f"  [diag] gradnorm {_gn} | "
+                        f"spike L={diag_log.get('diag/loss_spike_ratio', 0.0):+.2f} "
+                        f"G={diag_log.get('diag/grad_spike_ratio', 0.0):.2f} | "
+                        f"nonfinite={_nf:.0f}",
+                        flush=True,
+                    )
             if use_wandb and is_main:
                 import wandb
 
@@ -2175,6 +2194,13 @@ def main():
             val_ok = bool(val) and "val/loss" in val
             if val_ok and is_main:
                 print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc'] * 100:.1f}%")
+                _cba = val.get("val/per_codebook_acc")
+                if _cba:
+                    print(
+                        "  [val] per-codebook acc: "
+                        + " ".join(f"cb{i}={a * 100:.1f}%" for i, a in enumerate(_cba)),
+                        flush=True,
+                    )
             if val_ok and use_wandb and is_main:
                 import wandb
 
