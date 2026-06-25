@@ -25,6 +25,11 @@ train:
 loss:
   text_weight: 0.1
   audio_weight: 1.0
+  # Phase 0 fix (ported from the TPU run): down-weight the special padding
+  # tokens (262144-262147) in the text CE so the un-learnable, mean-init
+  # padding rows don't pin text loss at ~ln(V). Applies on any backend.
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
 optim:
   lr_lora: 3.0e-4
   lr_full_ft: 1.0e-4

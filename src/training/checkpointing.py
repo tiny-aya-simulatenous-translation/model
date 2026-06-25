@@ -406,9 +406,31 @@ def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:
             text=True,
         )
         if result.returncode != 0:
+            # An EMPTY/partial checkpoint dir (e.g. a stale ``best_by_val/`` left
+            # by a preempted run) yields "No URLs matched". That is not a real
+            # checkpoint -> start fresh instead of aborting the whole run. Any
+            # OTHER download failure (a real checkpoint that failed to transfer)
+            # still raises, so a production resume can't silently lose progress.
+            if "No URLs matched" in (result.stderr or ""):
+                print(
+                    f"[ckpt] WARNING: {gcs_src} is empty/partial "
+                    f"(No URLs matched) -- starting fresh from step 0.",
+                    flush=True,
+                )
+                return 0
             raise RuntimeError(
                 f"gsutil download failed (rc={result.returncode}): {result.stderr}"
             )
+
+    # A dir that existed but carries no metadata (incomplete save) is not
+    # resumable -- start fresh rather than crash on the open() below.
+    if not os.path.exists(os.path.join(load_dir, "metadata.json")):
+        print(
+            f"[ckpt] WARNING: no metadata.json under {load_dir} "
+            f"(incomplete checkpoint) -- starting fresh from step 0.",
+            flush=True,
+        )
+        return 0
 
     with open(os.path.join(load_dir, "metadata.json")) as f:
         meta = json.load(f)

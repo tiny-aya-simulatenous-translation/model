@@ -25,6 +25,15 @@ because the codebook dimension is small (8) and stable.
 import torch
 import torch.nn.functional as F
 
+# Special padding token IDs in the interleaved text stream (canonical source:
+# src/data/interleaver.py; must match TinyAyaBackbone's extended vocab).
+# Mirrored locally to avoid a training<-data import dependency, as in
+# src/training/loss.py.
+TEXT_PADDING = 262144
+END_OF_TEXT_PADDING = 262145
+ZERO_PADDING = 262146
+IN_WORD_PADDING = 262147
+
 
 def compute_hierarchical_translation_loss(
     text_logits: torch.Tensor,  # [B, T, text_vocab]
@@ -35,6 +44,8 @@ def compute_hierarchical_translation_loss(
     loss_mask: torch.Tensor,  # [B, T] — 1 ONLY on target positions
     text_weight: float = 0.1,
     audio_weight: float = 1.0,
+    text_padding_weight: float = 0.01,
+    zero_padding_weight: float = 0.0,
 ) -> dict[str, torch.Tensor]:
     # Next-token shift
     tl = text_logits[:, :-1].contiguous()
@@ -67,12 +78,28 @@ def compute_hierarchical_translation_loss(
     num_cb = al.shape[1]
     V_audio = al.shape[-1]
 
-    # Text loss on target positions
+    # Text loss on target positions, with PADDING-AWARE weighting.
+    #
+    # The interleaved target-text stream is ~60% special padding tokens
+    # (IN_WORD/END_OF_TEXT/TEXT_PADDING, IDs 262144-262147) whose lm_head rows
+    # are mean-initialised and barely trainable. Weighting them equally with
+    # real tokens (the old uniform `_masked_sum`) pins text CE at ~ln(V) and
+    # drowns out the ~38% real tokens the pretrained head CAN learn -- that is
+    # why the text stream "froze at random". Ported from Stage-1
+    # `src/training/loss.py`: down-weight padding, zero out ZERO_PADDING.
+    # (Empirically verified on the train split, 2026-06-24.)
     if text_weight > 0:
         tl_flat = tl.reshape(-1, V_text)
         tt_flat = tt.reshape(-1)
         ce = F.cross_entropy(tl_flat.float(), tt_flat, reduction="none").view(B, Tm1)
-        text_loss = _masked_sum(ce) / denom
+        tw = torch.ones_like(ce)
+        is_pad = (tt == TEXT_PADDING) | (tt == END_OF_TEXT_PADDING) | (tt == IN_WORD_PADDING)
+        tw = torch.where(is_pad, torch.full_like(tw, text_padding_weight), tw)
+        tw = torch.where(tt == ZERO_PADDING, torch.full_like(tw, zero_padding_weight), tw)
+        # Combine token weights with the target-position mask (0 off-target).
+        wmask = torch.where(mask, tw, zero)
+        ce_m = torch.nan_to_num(torch.where(mask, ce, zero), nan=0.0, posinf=0.0, neginf=0.0)
+        text_loss = (ce_m * wmask).sum() / wmask.sum().clamp(min=1.0)
     else:
         text_loss = torch.zeros((), device=tl.device)
 

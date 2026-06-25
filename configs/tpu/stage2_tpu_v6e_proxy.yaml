@@ -1,0 +1,78 @@
+# TPU v6e-8 PROXY config for W&B sweeps (sweeps/sweep_stage2.yaml).
+#
+# A short, cheap variant of stage2_tpu_v6e_v2.yaml used by `wandb agent` to
+# rank hyperparameters before the expensive 22 h run. The sweep overrides the
+# swept knobs as CLI args (lr_lora/lr_depth/lora_r/lora_alpha_mult/text_weight/
+# warmup_steps/weight_decay/max_steps/val_every/val_on_tpu); the values here are
+# just defaults for a single manual run. Same real data + topology as prod so
+# proxy rankings transfer; only the horizon + checkpointing are trimmed.
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 200          # cheaper than prod 300; still representative
+  audio_frame_rate: 12.5
+  num_workers: 16
+  pin_memory: false
+
+train:
+  num_codebooks: 8
+  batch_size: 8            # only viable FSDPv2+bf16 topology on v6e-8
+  grad_accum: 4
+  max_steps: 600           # sweep overrides
+  warmup_steps: 100        # sweep overrides
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  log_grad_norm: true
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: false
+  weight_decay: 0.01       # sweep overrides
+  adam_beta1: 0.9
+  adam_beta2: 0.95
+
+loss:
+  text_weight: 0.1         # sweep overrides
+  audio_weight: 1.0
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
+
+lora:
+  r: 16                    # sweep overrides (lora_r)
+  alpha: 32                # sweep overrides (lora_alpha_mult * r)
+  target_modules: [q_proj, v_proj, embed_tokens]
+  lora_exclude_top: 2
+  num_full_ft_layers: 0
+
+optim:
+  lr_lora: 1.5e-4          # sweep overrides
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 2.5e-4         # sweep overrides
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  save_every: 0            # no checkpoints for proxy trials
+  audio_every: 100000
+  val_every: 150           # sweep overrides
+  val_max_batches: 10      # cheap val
+  val_on_tpu: true         # sweep overrides
+  diag_metrics: true
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-proxy
+  keep_last_n: 1
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-sweep-proxy
+
+perf:
+  enabled: true
+  warmup_skip_steps: 5
+  xprof_trace_labels: false

@@ -1,0 +1,54 @@
+# W&B hyperparameter sweep — TinyAya Stage 2 (PROXY search, NOT the 22h run)
+#
+# Runs SHORT proxy trials to find a good recipe before committing the
+# expensive v6e-8 slot. Uses Bayesian search + Hyperband early-termination
+# (W&B's built-in ASHA-equivalent) so bad trials die fast.
+#
+# HOW TO RUN (see sweeps/README.md for the full runbook):
+#   wandb sweep simultaneous-translation/sweeps/sweep_stage2.yaml
+#   wandb agent <entity>/<project>/<sweep_id>      # on the TPU VM
+#
+# NOTE: on a single v6e-8, trials run SEQUENTIALLY (one SPMD program per
+# host) and each pays the ~18 min cold XLA compile. Keep max_steps small,
+# lean on hyperband, and consider a tiny proxy config for the LR-range test.
+
+program: scripts/train_hierarchical.py
+method: bayes
+metric:
+  name: val/audio_loss      # audio is the learning signal; swap to val/loss once text is fixed
+  goal: minimize
+
+# Hyperband early-termination: kill trials in the bottom bracket at
+# 150/450 steps (eta=3). Equivalent to ASHA successive-halving.
+early_terminate:
+  type: hyperband
+  min_iter: 150
+  eta: 3
+
+parameters:
+  # ---- swept (the high-ROI knobs from docs/next-15k-run-plan.md) ----
+  lr_lora:        { distribution: log_uniform_values, min: 5.0e-5, max: 5.0e-4 }
+  lr_depth:       { distribution: log_uniform_values, min: 1.0e-4, max: 8.0e-4 }
+  lora_r:         { values: [16, 32, 64] }
+  lora_alpha_mult: { values: [1, 2] }         # alpha = mult * r
+  text_weight:    { values: [0.1, 0.5, 1.0, 2.0] }
+  warmup_steps:   { values: [100, 300, 600] }
+  weight_decay:   { values: [0.0, 1.0e-3, 1.0e-2] }
+  # ---- fixed for proxy trials ----
+  max_steps:      { value: 600 }
+  val_every:      { value: 150 }
+  val_on_tpu:     { value: true }
+
+# wandb agent passes each swept parameter as a CLI arg via ${args}
+# (--lr_lora <v> --lora_r <v> ...). train_hierarchical.py parses them through
+# its existing CLI-override path; lora_r/lora_alpha_mult map to lora.r/lora.alpha.
+# RUN THE AGENT WITH THE TPU ENV EXPORTED (LD_LIBRARY_PATH, PJRT_DEVICE=TPU,
+# XLA_NO_SPECIAL_SCALARS=1, ...) -- ${env} inherits it. See sweeps/README.md.
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --config
+  - configs/stage2_tpu_v6e_proxy.yaml
+  - --sweep
+  - ${args}

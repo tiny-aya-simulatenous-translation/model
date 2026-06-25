@@ -1,0 +1,40 @@
+name: ci
+
+# Lightweight, dependency-free checks that protect the dual-backend seam and
+# catch obvious breakage without needing torch / torch_xla / a TPU. Heavier
+# unit tests run separately (they need the model deps installed).
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  seam-and-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Backend seam (no module-level torch_xla in shared code)
+        run: bash scripts/ci/check_backend_seam.sh
+
+      - name: Byte-compile all Python sources
+        run: |
+          find src -name '*.py' -print0 | xargs -0 -n1 python3 -m py_compile
+          for s in scripts/train_hierarchical.py scripts/make_splits.py \
+                   scripts/eval_checkpoint.py scripts/gen_parallel.py \
+                   scripts/tpu/probe_strategies.py; do
+            test -f "$s" && python3 -m py_compile "$s"
+          done
+
+      - name: Parse all YAML configs + sweeps
+        run: |
+          python3 -m pip install --quiet pyyaml
+          for y in configs/*/*.yaml sweeps/*.yaml; do
+            python3 -c "import yaml; yaml.safe_load(open('$y'))"
+          done
+
+      - name: Shell scripts parse
+        run: bash -n scripts/tpu/*.sh scripts/ci/*.sh

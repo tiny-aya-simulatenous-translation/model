@@ -43,6 +43,7 @@ Two new keys plumb the scan_layers / grad-checkpoint feature flags:
 import argparse
 import contextlib
 import json
+import math
 import os
 import sys
 import time
@@ -486,7 +487,11 @@ def get_param_groups(model, optim_cfg):
             groups["text_embed"]["params"].append(param)
         elif "lora_" in name or "lora_embedding" in name:
             groups["lora"]["params"].append(param)
-        elif any(f"layers.{i}." in name for i in range(34, 36)):
+        elif ".layers." in name:
+            # An unfrozen backbone transformer-layer base weight (top-N
+            # full-FT). depth/projection/embed/lora are handled above, so any
+            # remaining ".layers." param is a fully-fine-tuned backbone block.
+            # Index-agnostic so it tracks lora.num_full_ft_layers for any N.
             groups["full_ft"]["params"].append(param)
         else:
             groups["lora"]["params"].append(param)
@@ -496,6 +501,53 @@ def get_param_groups(model, optim_cfg):
         n = sum(p.numel() for p in g["params"])
         print(f"  {g['name']}: {len(g['params'])} tensors, {n / 1e6:.1f}M, lr={g['lr']}")
     return result
+
+
+def _group_grad_diag(optimizer, device):
+    """On-device per-group stability diagnostics for the training dashboard.
+
+    Returns ``(names, values)`` where ``values`` is a 1-D tensor of per-group
+    scalars: grad L2 norm, param L2 norm, mean Adam 2nd-moment (``exp_avg_sq``),
+    and count of non-finite grad elements. Call ONLY at a log boundary and
+    BEFORE ``zero_grad`` (grads must be live). Pure XLA ops, so the whole
+    bundle materialises in ONE host transfer at log time (no per-step sync) --
+    same discipline as the loss logging. Update-to-weight ratio, spike ratios
+    and Adam-v drift are derived host-side from these at log time.
+    """
+    names: list[str] = []
+    vals: list[torch.Tensor] = []
+    for pg in optimizer.param_groups:
+        gname = pg.get("name")
+        if gname is None:
+            continue
+        gsq = torch.zeros((), device=device)
+        psq = torch.zeros((), device=device)
+        vsum = torch.zeros((), device=device)
+        nonfin = torch.zeros((), device=device)
+        vcnt = 0
+        for p in pg["params"]:
+            if not p.requires_grad:
+                continue
+            g = p.grad if p.grad is not None else torch.zeros_like(p)
+            gf = g.float()
+            gsq = gsq + (gf * gf).sum()
+            nonfin = nonfin + (~torch.isfinite(gf)).sum().to(gsq.dtype)
+            pf = p.detach().float()
+            psq = psq + (pf * pf).sum()
+            st = optimizer.state.get(p)
+            if st is not None and "exp_avg_sq" in st:
+                vsum = vsum + st["exp_avg_sq"].float().sum()
+                vcnt += int(st["exp_avg_sq"].numel())
+        names += [
+            f"grad_norm/{gname}",
+            f"param_norm/{gname}",
+            f"adam_v_mean/{gname}",
+            f"nonfinite_grads/{gname}",
+        ]
+        vals += [gsq.sqrt(), psq.sqrt(), vsum / max(vcnt, 1), nonfin]
+    if not vals:
+        return [], torch.zeros(0, device=device)
+    return names, torch.stack(vals)
 
 
 # ---------------------------------------------------------------------------
@@ -614,6 +666,8 @@ def run_validation(
     per_cb_sum = torch.zeros(num_codebooks, device=device)
     cb0_correct = torch.zeros((), device=device)
     cb0_total = torch.zeros((), device=device)
+    # Per-codebook top-1 accuracy accumulator (audio-codebook health, metric #6).
+    cb_correct = torch.zeros(num_codebooks, device=device)
     n_finite = torch.zeros((), device=device)
     n = 0
     for batch in val_loader:
@@ -670,6 +724,8 @@ def run_validation(
                 loss_mask,
                 text_weight=loss_cfg["text_weight"],
                 audio_weight=loss_cfg["audio_weight"],
+                text_padding_weight=loss_cfg.get("text_padding_weight", 0.01),
+                zero_padding_weight=loss_cfg.get("zero_padding_weight", 0.0),
             )
             # First-batch NaN localization (one host sync; diagnostic only).
             # Pinpoints whether the non-finite originates in the backbone
@@ -715,6 +771,13 @@ def run_validation(
         m = (loss_mask[:, 1:].bool() & mask[:, 1:].bool()).to(acc_loss.dtype)
         cb0_correct = cb0_correct + ((pred == target).to(m.dtype) * m).sum()
         cb0_total = cb0_total + m.sum()
+        # All-codebook top-1 acc (same target positions; static-shape, no
+        # boolean indexing). [B,CB,T-1] preds vs targets, masked, summed -> [CB].
+        preds_cb = audio_logits[:, :, :-1].argmax(dim=-1)  # [B, CB, T-1]
+        tgts_cb = all_codes[:, :num_codebooks, 1:]
+        cb_correct = cb_correct + (
+            (preds_cb == tgts_cb).to(m.dtype) * m.unsqueeze(1)
+        ).sum(dim=(0, 2))
         n += 1
         if is_tpu:
             _xm.mark_step()
@@ -734,6 +797,7 @@ def run_validation(
         per_cb_sum = backend.reduce_mean(per_cb_sum) * ws
         cb0_correct = backend.reduce_mean(cb0_correct) * ws
         cb0_total = backend.reduce_mean(cb0_total) * ws
+        cb_correct = backend.reduce_mean(cb_correct) * ws
         n_finite = backend.reduce_mean(n_finite) * ws
 
     # Single host-sync point for the whole validation pass.
@@ -753,6 +817,9 @@ def run_validation(
         "val/audio_loss": (acc_audio * inv).item(),
         "val/cb0_acc": (cc / ct) if ct > 0 else 0.0,
         "val/per_codebook_loss": (per_cb_sum * inv).detach().cpu().tolist(),
+        "val/per_codebook_acc": (
+            (cb_correct / ct).detach().cpu().tolist() if ct > 0 else [0.0] * num_codebooks
+        ),
     }
 
 
@@ -800,6 +867,21 @@ def build_parser():
 
     p.add_argument("--backend", type=str, default=None, choices=["auto", "gpu", "tpu"])
     p.add_argument("--resume", type=str, default=None, help="checkpoint dir to resume from")
+
+    # --- W&B sweep knobs (passed as CLI args by `wandb agent` via ${args}) ---
+    # Generic ones (lr_lora/lr_depth -> optim, text_weight -> loss,
+    # weight_decay -> train, val_on_tpu -> logging) map through load_config by
+    # name; lora_r/lora_alpha_mult need the explicit r/alpha handling in main().
+    p.add_argument("--sweep", action="store_true",
+                   help="W&B sweep run: log sweep/text_ok health flag")
+    p.add_argument("--lr_lora", type=float, default=None)
+    p.add_argument("--lr_depth", type=float, default=None)
+    p.add_argument("--text_weight", type=float, default=None)
+    p.add_argument("--weight_decay", type=float, default=None)
+    p.add_argument("--val_on_tpu", type=lambda s: s.lower() in ("1", "true", "yes"), default=None)
+    p.add_argument("--lora_r", type=int, default=None)
+    p.add_argument("--lora_alpha_mult", type=int, default=None,
+                   help="lora.alpha = lora_alpha_mult * lora_r")
     return p
 
 
@@ -808,9 +890,29 @@ def main():
     overrides = {
         k: v
         for k, v in vars(args).items()
-        if k not in ("config", "dataset_mode", "data_dir", "resume")
+        # lora_r/lora_alpha_mult map to lora.r/lora.alpha (name mismatch) and
+        # `sweep` is a control flag -- all handled explicitly below.
+        if k not in ("config", "dataset_mode", "data_dir", "resume",
+                     "sweep", "lora_r", "lora_alpha_mult")
     }
     cfg = load_config(args.config, overrides)
+
+    # W&B sweep: LoRA rank/alpha (alpha = mult * r) need explicit mapping onto
+    # the nested `lora` section. Everything else (lr_lora/lr_depth/text_weight/
+    # weight_decay/warmup_steps/max_steps/val_every/val_on_tpu) flowed through
+    # load_config above by matching the cfg section key.
+    if args.lora_r is not None:
+        cfg.setdefault("lora", {})["r"] = args.lora_r
+    if args.lora_alpha_mult is not None:
+        _r = cfg.get("lora", {}).get("r", 16)
+        cfg.setdefault("lora", {})["alpha"] = args.lora_alpha_mult * _r
+    if args.sweep:
+        print(f"[sweep] overrides -> lr_lora={cfg['optim'].get('lr_lora')} "
+              f"lr_depth={cfg['optim'].get('lr_depth')} "
+              f"lora={cfg.get('lora')} text_weight={cfg['loss'].get('text_weight')} "
+              f"warmup={cfg['train'].get('warmup_steps')} "
+              f"wd={cfg['train'].get('weight_decay')} max_steps={cfg['train'].get('max_steps')}",
+              flush=True)
 
     # ---- distributed init (GPU or TPU)
     backend_type = cfg.get("backend", "auto")
@@ -868,7 +970,15 @@ def main():
         use_scan_layers=use_scan,
         xla_grad_checkpoint=use_xla_ckpt,
     )
-    model.backbone = apply_lora(model.backbone, r=16)
+    _lora_cfg = cfg.get("lora", {})
+    model.backbone = apply_lora(
+        model.backbone,
+        r=_lora_cfg.get("r", 16),
+        lora_alpha=_lora_cfg.get("alpha", 32),
+        target_modules=_lora_cfg.get("target_modules", ["q_proj", "v_proj", "embed_tokens"]),
+        num_full_ft_layers=_lora_cfg.get("num_full_ft_layers", 0),
+        lora_exclude_top=_lora_cfg.get("lora_exclude_top", 2),
+    )
     freeze_depth_internals(model)
     for p in model.projection.parameters():
         p.requires_grad = True
@@ -1375,6 +1485,8 @@ def main():
     val_every = cfg["logging"]["val_every"]
     text_w = cfg["loss"]["text_weight"]
     audio_w = cfg["loss"]["audio_weight"]
+    text_pad_w = cfg["loss"].get("text_padding_weight", 0.01)
+    zero_pad_w = cfg["loss"].get("zero_padding_weight", 0.0)
     perf_cfg = cfg.get("perf", {})
     perf_enabled = bool(perf_cfg.get("enabled", False))
     perf_warmup_skip_steps = int(perf_cfg.get("warmup_skip_steps", 50))
@@ -1476,6 +1588,7 @@ def main():
         advance_scheduler: bool,
         ensure_optimizer_state: bool = False,
         record_for_replay: list[dict[str, torch.Tensor]] | None = None,
+        compute_diag: bool = False,
     ) -> dict[str, object]:
         """Run one static grad-accum macro-step and return unlogged metrics.
 
@@ -1588,6 +1701,8 @@ def main():
                             loss_mask,
                             text_weight=text_w,
                             audio_weight=audio_w,
+                            text_padding_weight=text_pad_w,
+                            zero_padding_weight=zero_pad_w,
                         )
                 loss = losses["loss"] / grad_accum
                 with trace_ctx("backward"):
@@ -1688,6 +1803,13 @@ def main():
                 print(f"!!! Non-finite loss at step {step}. Aborting.")
                 sys.exit(2)
 
+        # Stability dashboard: per-group grad/param/Adam diagnostics, captured
+        # here while grads are LIVE (before zero_grad) and only on log-boundary
+        # macro-steps (compute_diag). On-device; materialised once at log time.
+        diag_names, diag_vals = ([], None)
+        if compute_diag:
+            diag_names, diag_vals = _group_grad_diag(optimizer, device)
+
         with trace_ctx("optimizer_step"):
             backend.optimizer_step(optimizer)
             if advance_scheduler:
@@ -1704,6 +1826,8 @@ def main():
                 "audio_xla": micro_audio_xla,
                 "per_cb_xla": micro_per_cb_xla,
                 "grad_norm": grad_norm,
+                "diag_names": diag_names,
+                "diag_vals": diag_vals,
             }
         return {
             "loss": micro_loss_sum,
@@ -1711,6 +1835,8 @@ def main():
             "audio": micro_audio,
             "per_cb": micro_per_cb,
             "grad_norm": grad_norm,
+            "diag_names": diag_names,
+            "diag_vals": diag_vals,
         }
 
     if is_main:
@@ -1805,11 +1931,24 @@ def main():
         _xm.mark_step()
         optimizer.zero_grad(set_to_none=False)
         sentinel_after = trainable_weight_sentinel()
-        if sentinel_after != sentinel_before:
+        # Tolerance-based drift check. Warmup runs at lr=0 AND wd=0, so a real
+        # weight update is mathematically 0; but EXACT float equality is
+        # fragile on TPU/bf16 (the same unchanged weights read through two
+        # different XLA graphs can differ by rounding noise). Use a small
+        # absolute tolerance so genuine drift (a mis-zeroed LR/WD group) still
+        # trips it while bf16 read-noise does not.
+        _drift = max(
+            (abs(a - b) for a, b in zip(sentinel_after, sentinel_before)),
+            default=0.0,
+        )
+        if _drift > 1e-2:
             raise RuntimeError(
-                "TPU compile warmup changed sampled trainable weights: "
-                f"before={sentinel_before[:4]} after={sentinel_after[:4]}"
+                "TPU compile warmup changed trainable weights beyond tolerance: "
+                f"max|delta|={_drift:.3e} before={sentinel_before[:4]} "
+                f"after={sentinel_after[:4]}"
             )
+        if is_main:
+            print(f"[compile-warmup] weight-drift check OK (max|delta|={_drift:.3e})", flush=True)
         micro_batches_seen_this_epoch = 0
         replay_batches.extend(warmup_replay)
         if is_main:
@@ -1819,12 +1958,21 @@ def main():
                 flush=True,
             )
 
+    # Stability-dashboard host-side EMA state (updated at log cadence) for the
+    # loss/grad spike ratios and Adam-v drift. ``diag_metrics`` gates the extra
+    # per-group on-device reductions (default on; cheap, log-boundary only).
+    diag_enabled = bool(cfg["logging"].get("diag_metrics", True))
+    _ema = {"loss": None, "grad": None, "v": {}}
+
     while step < max_steps:
         if is_tpu and micro_batches_seen_this_epoch + grad_accum > usable_micro_batches_per_epoch:
             data_iter = iter(train_loader)
             micro_batches_seen_this_epoch = 0
 
-        macro = run_macro_step(advance_scheduler=True)
+        macro = run_macro_step(
+            advance_scheduler=True,
+            compute_diag=(diag_enabled and (step + 1) % log_every == 0),
+        )
         step += 1
         if step in (1, 2, 5, 10, 25, 50):
             if hasattr(backend, "diagnose"):
@@ -1861,6 +2009,53 @@ def main():
                     k: (v / log_every if k != "per_cb" else (v / log_every).tolist())
                     for k, v in running.items()
                 }
+
+            # ---- stability dashboard: per-group + spike metrics (host-side
+            # derivation from the on-device bundle; one transfer per log step).
+            diag_log: dict[str, float] = {}
+            _dvals = macro.get("diag_vals")
+            _dnames = macro.get("diag_names") or []
+            if _dvals is not None and len(_dnames) > 0:
+                _flat = _dvals.cpu().tolist()  # single host transfer for all groups
+                gd = dict(zip(_dnames, _flat))
+                _lr_by = {g["name"]: g["lr"] for g in optimizer.param_groups if "name" in g}
+                for gname in sorted({k.split("/", 1)[1] for k in gd}):
+                    gn = gd.get(f"grad_norm/{gname}", 0.0)
+                    pn = gd.get(f"param_norm/{gname}", 0.0)
+                    vm = gd.get(f"adam_v_mean/{gname}", 0.0)
+                    nf = gd.get(f"nonfinite_grads/{gname}", 0.0)
+                    lr = _lr_by.get(gname, 0.0)
+                    diag_log[f"diag/grad_norm/{gname}"] = gn
+                    diag_log[f"diag/param_norm/{gname}"] = pn
+                    diag_log[f"diag/update_weight_ratio/{gname}"] = (lr * gn) / (pn + 1e-12)
+                    diag_log[f"diag/adam_v_mean/{gname}"] = vm
+                    diag_log[f"diag/nonfinite_grads/{gname}"] = nf
+                    _pv = _ema["v"].get(gname)
+                    if _pv:
+                        diag_log[f"diag/adam_v_drift/{gname}"] = vm / (_pv + 1e-12)
+                    _ema["v"][gname] = vm if _pv is None else 0.9 * _pv + 0.1 * vm
+                    if nf > 0 and is_main:
+                        print(f"  [ALERT] {nf:.0f} non-finite grad elems in group "
+                              f"'{gname}' (step {step})", flush=True)
+            # loss / grad spike ratios + non-finite guard (host EMA at log cadence)
+            _lval = avg["loss"]
+            _gval = float(grad_norm.item()) if hasattr(grad_norm, "item") else float(grad_norm)
+            if _ema["loss"] is not None:
+                _ls = (_lval - _ema["loss"]) / (abs(_ema["loss"]) + 1e-9)
+                _gs = _gval / (_ema["grad"] + 1e-9)
+                diag_log["diag/loss_spike_ratio"] = _ls
+                diag_log["diag/grad_spike_ratio"] = _gs
+                if is_main and _ls > 0.10:
+                    print(f"  [ALERT] loss spike {_ls * 100:.0f}% (loss {_lval:.3f} "
+                          f"vs EMA {_ema['loss']:.3f}) step {step}", flush=True)
+                if is_main and _gs > 3.0:
+                    print(f"  [ALERT] grad spike {_gs:.1f}x (grad {_gval:.2f} "
+                          f"vs EMA {_ema['grad']:.2f}) step {step}", flush=True)
+            if is_main and not math.isfinite(_lval):
+                print(f"  [ALERT] non-finite train loss at step {step}", flush=True)
+            _ema["loss"] = _lval if _ema["loss"] is None else 0.9 * _ema["loss"] + 0.1 * _lval
+            _ema["grad"] = _gval if _ema["grad"] is None else 0.9 * _ema["grad"] + 0.1 * _gval
+
             now = time.time()
             log_interval_sec = now - t_last
             step_time = log_interval_sec / log_every
@@ -1902,6 +2097,25 @@ def main():
                     f"grad {grad_norm:.3f} | {step_time:.2f}s/step | "
                     f"peak {peak_gb:.1f}G | host_rss {host_rss_gb:.1f}G"
                 )
+                # Compact stability-dashboard line (visible in the log even when
+                # W&B is off; full series go to diag/* in W&B).
+                if diag_log:
+                    _gn = " ".join(
+                        f"{k.rsplit('/', 1)[1]}={diag_log[k]:.2f}"
+                        for k in sorted(diag_log)
+                        if k.startswith("diag/grad_norm/")
+                    )
+                    _nf = sum(
+                        v for k, v in diag_log.items()
+                        if k.startswith("diag/nonfinite_grads/")
+                    )
+                    print(
+                        f"  [diag] gradnorm {_gn} | "
+                        f"spike L={diag_log.get('diag/loss_spike_ratio', 0.0):+.2f} "
+                        f"G={diag_log.get('diag/grad_spike_ratio', 0.0):.2f} | "
+                        f"nonfinite={_nf:.0f}",
+                        flush=True,
+                    )
             if use_wandb and is_main:
                 import wandb
 
@@ -1917,9 +2131,14 @@ def main():
                     "host/rss_gb": host_rss_gb,
                     **perf_log,
                     **lrs,
+                    **diag_log,
                 }
                 for i, v in enumerate(avg["per_cb"]):
                     log[f"train/per_codebook_loss_{i}"] = v
+                if args.sweep:
+                    # Health flag so the sweep can auto-reject trials whose text
+                    # stream is stuck at random (CE ~ ln(text_vocab) ~ 12.5).
+                    log["sweep/text_ok"] = 1.0 if avg["text"] < 11.5 else 0.0
                 log["global_step"] = step
                 wandb.log(log)
             if is_tpu:
@@ -2014,12 +2233,22 @@ def main():
             val_ok = bool(val) and "val/loss" in val
             if val_ok and is_main:
                 print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc'] * 100:.1f}%")
+                _cba = val.get("val/per_codebook_acc")
+                if _cba:
+                    print(
+                        "  [val] per-codebook acc: "
+                        + " ".join(f"cb{i}={a * 100:.1f}%" for i, a in enumerate(_cba)),
+                        flush=True,
+                    )
             if val_ok and use_wandb and is_main:
                 import wandb
 
-                log = {k: v for k, v in val.items() if k != "val/per_codebook_loss"}
+                _list_keys = ("val/per_codebook_loss", "val/per_codebook_acc")
+                log = {k: v for k, v in val.items() if k not in _list_keys}
                 for i, v in enumerate(val["val/per_codebook_loss"]):
                     log[f"val/per_codebook_loss_{i}"] = v
+                for i, v in enumerate(val.get("val/per_codebook_acc", [])):
+                    log[f"val/per_codebook_acc_{i}"] = v
                 log["global_step"] = step
                 wandb.log(log)
             if val_ok and val["val/loss"] < best_val:
