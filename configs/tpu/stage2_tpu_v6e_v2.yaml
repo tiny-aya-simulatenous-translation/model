@@ -130,7 +130,17 @@ logging:
   # path holds a completed prior run; a clean dir avoids --resume auto picking
   # up stale-recipe checkpoints).
   save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-v2-sweepwin
-  keep_last_n: 5
+  # Checkpoint retention. keep_last_n<=0 => UNLIMITED: every periodic checkpoint
+  # is kept in GCS (no rotation). >0 keeps only the N most-recent step_* dirs.
+  # (best_by_val is always kept; it is not a step_* dir.) GCS is unbounded and
+  # cheap, so 0 is safe for full reproducibility/analysis of the trajectory.
+  keep_last_n: 0
+  # Also mirror periodic + final checkpoints to the VM's local disk (in addition
+  # to GCS). Guarded: if local_checkpoint_dir has <10 GB free, that save falls
+  # back to temp+upload (GCS copy is never affected). Point at the big data
+  # mount, not /, so it cannot fill the root disk.
+  keep_local_checkpoints: true
+  local_checkpoint_dir: /mnt/data/checkpoints
   use_wandb: true
   wandb_project: tinyaya-stage2-tpu
   wandb_run_name: v6e-v2-sweepwin-tw02

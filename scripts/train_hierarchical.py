@@ -1481,6 +1481,15 @@ def main():
     max_steps = cfg["train"]["max_steps"]
     log_every = cfg["logging"]["log_every"]
     save_every = cfg["logging"]["save_every"]
+    # Checkpoint retention. keep_last_n<=0 => UNLIMITED (no rotation). When
+    # keep_local_checkpoints is set, periodic + final checkpoints are also
+    # mirrored to local_checkpoint_dir on the VM (disk-guarded in save_checkpoint).
+    keep_last_n = cfg["logging"].get("keep_last_n", 5)
+    keep_local_dir = (
+        str(cfg["logging"].get("local_checkpoint_dir", "/mnt/data/checkpoints"))
+        if cfg["logging"].get("keep_local_checkpoints", False)
+        else None
+    )
     audio_every = cfg["logging"]["audio_every"]
     val_every = cfg["logging"]["val_every"]
     text_w = cfg["loss"]["text_weight"]
@@ -2298,9 +2307,11 @@ def main():
                 str(d),
                 extra_state={"config": cfg},
                 is_main=is_main,
+                keep_local_dir=keep_local_dir,
             )
             if is_main:
-                prune_checkpoints(save_dir, keep_last=3, keep_best="best_by_val")
+                # keep_last_n<=0 => prune_checkpoints no-ops (unlimited retention).
+                prune_checkpoints(save_dir, keep_last=keep_last_n, keep_best="best_by_val")
                 if push_to_hub and hub_repo_id:
                     try:
                         push_checkpoint_to_hub(
@@ -2329,6 +2340,7 @@ def main():
             str(d),
             extra_state={"config": cfg, "final": True},
             is_main=is_main,
+            keep_local_dir=keep_local_dir,
         )
 
     # patch 19: end-of-training canonical save (HF transformers issue
