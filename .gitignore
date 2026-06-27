@@ -64,15 +64,3 @@ runs/
 .claude/archive/.tmp-*
 .claude/hooks/__pycache__/
 phase-3-data-generation-pipeline
-
-# Claude session scaffolding (keep local, don't track)
-.claude/
-AGENTS.md
-docs/MEMORY-*.md
-docs/MEMORY-USAGE.md
-docs/onboarding.md
-docs/tpu-capacity-log.md
-docs/tpu-changes.md
-docs/tpu-launch-plan.md
-docs/tpu-trc-allocation.md
-docs/memory-system.png
