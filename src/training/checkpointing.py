@@ -99,6 +99,7 @@ def save_checkpoint(
     extra_state: dict | None = None,
     *,
     is_main: bool = True,
+    keep_local_dir: str | None = None,
 ):
     """Save a multi-component checkpoint, multi-host SPMD-safe.
 
@@ -202,10 +203,38 @@ def save_checkpoint(
     # directly. (Previously a gs:// save_dir silently produced a LOCAL
     # directory named "gs:".)
     gcs_dest = _normalize_gcs_dest(save_dir)
+    # keep_local: whether write_dir is persistent (not deleted after upload). A
+    # local save_dir is inherently persistent; a GCS save normally stages to a
+    # temp dir that is removed post-upload, UNLESS keep_local_dir requests a
+    # retained on-VM mirror (and the disk has headroom -- guarded below).
+    keep_local = gcs_dest is None
     if gcs_dest is not None:
+        import shutil
         import tempfile
 
-        write_dir = tempfile.mkdtemp(prefix="ckpt_")
+        write_dir = None
+        if keep_local_dir:
+            try:
+                os.makedirs(keep_local_dir, exist_ok=True)
+                free_gb = shutil.disk_usage(keep_local_dir).free / 1e9
+                if free_gb >= 10.0:
+                    write_dir = os.path.join(keep_local_dir, f"step_{step:06d}")
+                    keep_local = True
+                else:
+                    print(
+                        f"[ckpt] WARNING: keep_local_checkpoints set but only "
+                        f"{free_gb:.1f} GB free at {keep_local_dir} (<10) -- "
+                        f"staging step {step} to temp instead (GCS copy unaffected).",
+                        flush=True,
+                    )
+            except OSError as e:
+                print(
+                    f"[ckpt] WARNING: local_checkpoint_dir {keep_local_dir} unusable "
+                    f"({e}); staging to temp.",
+                    flush=True,
+                )
+        if write_dir is None:
+            write_dir = tempfile.mkdtemp(prefix="ckpt_")
     else:
         write_dir = save_dir
     os.makedirs(write_dir, exist_ok=True)
@@ -235,7 +264,10 @@ def save_checkpoint(
         import shutil
 
         _gsutil_cp_into(write_dir, gcs_dest)
-        shutil.rmtree(write_dir, ignore_errors=True)
+        if keep_local:
+            print(f"[ckpt] retained local mirror: {write_dir}", flush=True)
+        else:
+            shutil.rmtree(write_dir, ignore_errors=True)
 
 
 def save_checkpoint_canonical_final(
@@ -492,7 +524,14 @@ def push_checkpoint_to_hub(
 
 
 def prune_checkpoints(save_dir: str, keep_last: int = 5, keep_best: str | None = "best_by_val"):
-    """Delete all step_* checkpoints except the last `keep_last` by step, and the best."""
+    """Delete all step_* checkpoints except the last `keep_last` by step, and the best.
+
+    ``keep_last <= 0`` (or ``None``) disables pruning entirely -- UNLIMITED
+    retention, every checkpoint is kept. ``keep_best`` (e.g. ``best_by_val``) is
+    not a ``step_*`` dir, so it is never a deletion candidate regardless.
+    """
+    if keep_last is None or keep_last <= 0:
+        return  # unlimited retention -- do not rotate
     gcs_dest = _normalize_gcs_dest(save_dir)
     if gcs_dest is not None:
         import subprocess
