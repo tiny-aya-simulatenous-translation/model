@@ -185,6 +185,7 @@ from src.training.checkpointing import (
 from src.training.scheduler import WarmupCosineScheduler
 from src.training.codebook_schedule import codebook_weights
 from src.training.early_stop import early_stop_step
+from src.training.param_classify import is_depth_block
 from src.training.translation_loss import compute_hierarchical_translation_loss
 
 
@@ -455,7 +456,7 @@ def load_config(path: str | None, overrides: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def freeze_depth_internals(model):
+def freeze_depth_internals(model, unfreeze_last_n_blocks: int = 0):
     frozen, kept = 0, 0
     for name, param in model.depth_decoder.named_parameters():
         if any(k in name for k in ("input_projections", "embed_tokens", "lm_heads")):
@@ -465,6 +466,25 @@ def freeze_depth_internals(model):
             param.requires_grad = False
             frozen += param.numel()
     print(f"Depth decoder: frozen {frozen / 1e6:.0f}M, trainable I/O {kept / 1e6:.0f}M")
+    # Phase C3 (opt-in): unfreeze the last N depth transformer blocks for low-LR
+    # adaptation to the TR/HI residual distribution. Done at SETUP (before the FSDP
+    # wrap), so no risky mid-run param-group surgery. The Phase C2 unmask schedule
+    # gates deep-codebook gradients, so these blocks only begin learning once their
+    # codebooks unmask -- the "staged" effect without mutating the optimizer mid-run.
+    # They land in the `depth_blocks` low-LR group (get_param_groups via is_depth_block).
+    if unfreeze_last_n_blocks > 0:
+        layers = getattr(model.depth_decoder, "layers", None)
+        if layers is None:
+            print("  [depth-unfreeze] WARNING: depth_decoder has no .layers; skipping")
+        else:
+            n = min(unfreeze_last_n_blocks, len(layers))
+            uf = 0
+            for blk in list(layers)[-n:]:
+                for p in blk.parameters():
+                    p.requires_grad = True
+                    uf += p.numel()
+            print(f"  [depth-unfreeze] unfroze last {n}/{len(layers)} depth blocks "
+                  f"({uf / 1e6:.0f}M) -> low-LR depth_blocks group")
 
 
 def get_param_groups(model, optim_cfg):
@@ -473,6 +493,9 @@ def get_param_groups(model, optim_cfg):
         "full_ft": {"params": [], "lr": optim_cfg["lr_full_ft"]},
         "projection": {"params": [], "lr": optim_cfg["lr_projection"]},
         "depth": {"params": [], "lr": optim_cfg["lr_depth"]},
+        # Phase C3: unfrozen depth-decoder transformer blocks at a LOW LR
+        # (default lr_depth x 0.1). Empty -> dropped unless lora.depth_unfreeze_blocks>0.
+        "depth_blocks": {"params": [], "lr": optim_cfg.get("lr_depth_blocks", optim_cfg["lr_depth"] * 0.1)},
         "text_embed": {"params": [], "lr": optim_cfg["lr_text_embed"]},
         "model_audio_embed": {"params": [], "lr": optim_cfg.get("lr_model_audio_embed", optim_cfg["lr_audio_embed"])},
     }
@@ -483,6 +506,8 @@ def get_param_groups(model, optim_cfg):
             groups["model_audio_embed"]["params"].append(param)
         elif "projection" in name and "depth" not in name and "input_proj" not in name:
             groups["projection"]["params"].append(param)
+        elif is_depth_block(name):  # Phase C3: depth transformer blocks -> low LR
+            groups["depth_blocks"]["params"].append(param)
         elif "depth_decoder" in name:
             groups["depth"]["params"].append(param)
         elif "text_embed" in name and "depth" not in name:
@@ -984,7 +1009,9 @@ def main():
         lora_exclude_top=_lora_cfg.get("lora_exclude_top", 2),
         lora_dropout=_lora_cfg.get("dropout", 0.0),
     )
-    freeze_depth_internals(model)
+    freeze_depth_internals(
+        model, unfreeze_last_n_blocks=int(_lora_cfg.get("depth_unfreeze_blocks", 0))
+    )
     for p in model.projection.parameters():
         p.requires_grad = True
 

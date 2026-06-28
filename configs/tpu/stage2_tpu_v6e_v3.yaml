@@ -93,6 +93,11 @@ lora:
   target_modules: [q_proj, v_proj, embed_tokens]
   lora_exclude_top: 2
   num_full_ft_layers: 0
+  # Phase C3 (OPT-IN, default off): unfreeze the last N depth-decoder transformer
+  # blocks for low-LR adaptation to TR/HI acoustics. The Phase C2 unmask gates their
+  # gradients, so they only learn once the deep codebooks unmask. Start with frozen
+  # (rely on C1/C2 + Phase A first); set to e.g. 2 to enable.
+  depth_unfreeze_blocks: 0
 
 optim:
   # Phase A: lr_lora 4.6e-4 -> 1e-4 (the overshoot fix).
@@ -100,6 +105,9 @@ optim:
   lr_full_ft: 5.0e-5
   lr_projection: 5.0e-4
   lr_depth: 1.0e-4
+  # Phase C3: LR for unfrozen depth blocks (only used if depth_unfreeze_blocks>0).
+  # Low (x0.1 of lr_depth) so adapting the blocks doesn't destabilize the decoder.
+  lr_depth_blocks: 1.0e-5
   lr_audio_embed: 5.0e-4
   lr_text_embed: 5.0e-4
 

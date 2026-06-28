@@ -26,6 +26,72 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-28T16:44:22Z | feat/v0.3-implementation@81a65f3 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:44:09Z | feat/v0.3-implementation@81a65f3 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/tests/test_param_classify.py`
+
+
+## 2026-06-28T16:43:47Z | feat/v0.3-implementation@81a65f3 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3.yaml`
+
+
+## 2026-06-28T16:43:08Z | feat/v0.3-implementation@81a65f3 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:42:59Z | feat/v0.3-implementation@81a65f3 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:42:45Z | feat/v0.3-implementation@81a65f3 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:41:39Z | feat/v0.3-implementation@81a65f3 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:41:29Z | feat/v0.3-implementation@81a65f3 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:41:17Z | feat/v0.3-implementation@81a65f3 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:40:51Z | feat/v0.3-implementation@81a65f3 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/param_classify.py`
+
+
+## 2026-06-28T16:39:35Z | feat/v0.3-implementation@81a65f3 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:38:34Z | feat/v0.3-implementation@81a65f3 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:36:46Z | feat/v0.3-implementation@81a65f3 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T16:35:58Z | feat/v0.3-implementation@81a65f3 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T16:35:33Z | feat/v0.3-implementation@81a65f3 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
 ## 2026-06-28T16:34:44Z | feat/v0.3-implementation@3330568 | done | exec
 cd /home/cataluna84/Workspace/tinyaya-stage2-scale
 
