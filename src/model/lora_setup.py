@@ -53,6 +53,7 @@ def apply_lora(
     target_modules=None,
     num_full_ft_layers=0,
     lora_exclude_top=2,
+    lora_dropout=0.0,
 ):
     """Apply LoRA to the TinyAya backbone (config-driven; sweepable).
 
@@ -89,6 +90,7 @@ def apply_lora(
     lora_config = LoraConfig(
         r=r,
         lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
         target_modules=target_modules,
         layers_to_transform=lora_layers,
         bias="none",

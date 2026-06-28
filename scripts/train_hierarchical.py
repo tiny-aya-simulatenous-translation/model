@@ -183,6 +183,7 @@ from src.training.checkpointing import (
     save_checkpoint,
 )
 from src.training.scheduler import WarmupCosineScheduler
+from src.training.early_stop import early_stop_step
 from src.training.translation_loss import compute_hierarchical_translation_loss
 
 
@@ -726,6 +727,9 @@ def run_validation(
                 audio_weight=loss_cfg["audio_weight"],
                 text_padding_weight=loss_cfg.get("text_padding_weight", 0.01),
                 zero_padding_weight=loss_cfg.get("zero_padding_weight", 0.0),
+                # Phase A regularizer (train only; val stays clean CE for a true
+                # generalization metric -> see the val call site).
+                label_smoothing=loss_cfg.get("label_smoothing", 0.0),
             )
             # First-batch NaN localization (one host sync; diagnostic only).
             # Pinpoints whether the non-finite originates in the backbone
@@ -978,6 +982,7 @@ def main():
         target_modules=_lora_cfg.get("target_modules", ["q_proj", "v_proj", "embed_tokens"]),
         num_full_ft_layers=_lora_cfg.get("num_full_ft_layers", 0),
         lora_exclude_top=_lora_cfg.get("lora_exclude_top", 2),
+        lora_dropout=_lora_cfg.get("dropout", 0.0),
     )
     freeze_depth_internals(model)
     for p in model.projection.parameters():
@@ -1462,6 +1467,15 @@ def main():
     t0 = time.time()
     t_last = t0
     best_val = float("inf")
+    # Phase A early stopping: stop if val/loss hasn't improved by > min_delta for
+    # `early_stop_patience` consecutive val cycles. patience=0 disables it.
+    # NOTE: best_by_val is saved on every improvement regardless of patience, so
+    # stopping NEVER degrades the released model -- it only halts the run (and a
+    # longer patience can catch a late second-descent from the cosine LR decay).
+    early_stop_patience = int(cfg["train"].get("early_stop_patience", 0))
+    early_stop_min_delta = float(cfg["train"].get("early_stop_min_delta", 0.0))
+    _patience_left = early_stop_patience
+    _early_stop = False
 
     grad_accum = cfg["train"]["grad_accum"]
     # XLA traces all grad-accum micro-batches into one macro-step graph.
@@ -2260,8 +2274,27 @@ def main():
                     log[f"val/per_codebook_acc_{i}"] = v
                 log["global_step"] = step
                 wandb.log(log)
-            if val_ok and val["val/loss"] < best_val:
-                best_val = val["val/loss"]
+            _improved = False
+            if val_ok:
+                _dec = early_stop_step(
+                    val["val/loss"], best_val, _patience_left,
+                    early_stop_patience, early_stop_min_delta,
+                )
+                _improved, best_val, _patience_left = (
+                    _dec.improved, _dec.best_val, _dec.patience_left,
+                )
+                if _dec.should_stop:
+                    _early_stop = True
+                if not _improved and early_stop_patience > 0 and is_main:
+                    _tag = "STOPPING" if _dec.should_stop else (
+                        f"patience {max(_patience_left, 0)}/{early_stop_patience}"
+                    )
+                    print(
+                        f"  [early-stop] no val improvement (>{early_stop_min_delta}); "
+                        f"{_tag} (best {best_val:.4f})",
+                        flush=True,
+                    )
+            if _improved:
                 # Validation only runs on GPU (not is_tpu), where save_dir is
                 # local; keep best_by_val as a local Path.
                 best_dir = Path(save_dir) / "best_by_val"
@@ -2320,6 +2353,9 @@ def main():
                     except Exception as e:
                         print(f"  hub push failed: {e}")
             backend.barrier()
+
+        if _early_stop:
+            break  # Phase A early stopping -> fall through to the final save below
 
     # ---- final save (multi-host SPMD-safe; see patch 16/17)
     # patch 18b: respect save_every=0 escape hatch -- skip the final save

@@ -26,6 +26,264 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-28T16:21:46Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:21:28Z | feat/v0.3-implementation@d8f3889 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/tests/test_early_stop.py`
+
+
+## 2026-06-28T16:20:42Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:20:30Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:20:15Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:19:38Z | feat/v0.3-implementation@d8f3889 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/early_stop.py`
+
+
+## 2026-06-28T16:18:36Z | feat/v0.3-implementation@d8f3889 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3.yaml`
+
+
+## 2026-06-28T16:16:19Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:16:01Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:15:48Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:15:18Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:15:08Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:14:52Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:12:39Z | feat/v0.3-implementation@d8f3889 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T16:08:23Z | feat/v0.3-implementation@d8f3889 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T16:06:18Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:05:47Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:05:36Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/translation_loss.py`
+
+
+## 2026-06-28T16:05:28Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/translation_loss.py`
+
+
+## 2026-06-28T16:05:18Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/translation_loss.py`
+
+
+## 2026-06-28T16:04:55Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T16:04:22Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:04:11Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/model/lora_setup.py`
+
+
+## 2026-06-28T16:04:02Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/model/lora_setup.py`
+
+
+## 2026-06-28T16:00:42Z | feat/v0.3-implementation@d8f3889 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T16:00:11Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:56:54Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/pr10_cur.md`
+
+
+## 2026-06-28T15:56:37Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/pr10_cur.md`
+
+
+## 2026-06-28T15:56:29Z | feat/v0.3-implementation@d8f3889 | done | edit
+edited `/tmp/claude-1000/-home-cataluna84-Workspace-tinyaya-stage2-scale/9d91a9c6-d22b-474c-8971-e137f68da904/scratchpad/pr10_cur.md`
+
+
+## 2026-06-28T15:56:11Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:55:51Z | feat/v0.3-implementation@d8f3889 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:54:48Z | feat/v0.3-implementation@839de30 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:54:35Z | feat/v0.3-implementation@839de30 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/docs/v0.3-implementation-plan.md`
+
+
+## 2026-06-28T15:54:16Z | feat/v0.3-implementation@839de30 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/docs/v0.3-implementation-plan.md`
+
+
+## 2026-06-28T15:53:21Z | feat/v0.3-implementation@839de30 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/docs/v0.3-implementation-plan.md`
+
+
+## 2026-06-28T15:52:51Z | feat/v0.3-implementation@839de30 | info | session
+PreCompact (auto): 10 unchecked PLAN items
+
+Top open items:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Deferred (optional): Gradient Noise Scale, logit/activation RMS (a `--diag`
+- Promote winning recipe → `configs/stage2_tpu_v6e_v2.yaml`.
+- Launch 22 h run (`launch_release.sh`); monitor the dashboard + inline val.
+- GPU ASR-BLEU + DNSMOS (`scripts/eval_release.py`); fill `model-index`
+
+
+## 2026-06-28T15:52:44Z | feat/v0.3-implementation@839de30 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:52:37Z | feat/v0.3-implementation@839de30 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/docs/v0.3-implementation-plan.md`
+
+
+## 2026-06-28T15:45:04Z | feat/v0.3-implementation@839de30 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:41:05Z | feat/v0.3-implementation@839de30 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T15:40:49Z | feat/v0.3-implementation@839de30 | done | edit
+edited `/home/cataluna84/.claude/projects/-home-cataluna84-Workspace-tinyaya-stage2-scale/memory/v03-training-plan.md`
+
+
+## 2026-06-28T15:40:33Z | feat/v0.3-implementation@839de30 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:40:01Z | feat/v0.3-implementation@839de30 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:38:55Z | main@3de3bb4 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/docs/v0.3-implementation-plan.md`
+
+
+## 2026-06-28T15:35:12Z | main@3de3bb4 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T15:13:37Z | main@3de3bb4 | info | session
+SessionEnd (resume): 10 item(s) carried forward
+
+Next steps:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Deferred (optional): Gradient Noise Scale, logit/activation RMS (a `--diag`
+- Promote winning recipe → `configs/stage2_tpu_v6e_v2.yaml`.
+
+
+## 2026-06-27T04:11:13Z | main@3de3bb4 | info | session
+SessionEnd (other): 10 item(s) carried forward
+
+Next steps:
+- Text stream learns (val/text_loss drops well below ln(V)≈12.5) OR the
+- `full_ft` (top-N layer unfreeze) is either active (non-empty group) or
+- 8-metric stability dashboard live in W&B (on-device, no per-step host
+- W&B sweep runnable end-to-end (`wandb sweep` → agent → dashboard) on a
+- One full run launched with the swept recipe; GPU ASR-BLEU/DNSMOS eval
+- (sweep) tune `text_weight` (0.1→?) now that padding no longer dominates;
+- Deferred (optional): Gradient Noise Scale, logit/activation RMS (a `--diag`
+- Promote winning recipe → `configs/stage2_tpu_v6e_v2.yaml`.
+
+
+## 2026-06-27T03:41:14Z | main@3de3bb4 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-27T03:40:59Z | main@3de3bb4 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-27T03:39:49Z | main@3de3bb4 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-27T03:39:27Z | main@3de3bb4 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-27T03:39:08Z | main@3de3bb4 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
 ## 2026-06-27T02:08:25Z | feat/tpu-metrics-sweeps-flat@912f4e9 | done | exec
 cd /home/cataluna84/Workspace/tinyaya-stage2-scale
 

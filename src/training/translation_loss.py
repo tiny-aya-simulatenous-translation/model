@@ -46,6 +46,7 @@ def compute_hierarchical_translation_loss(
     audio_weight: float = 1.0,
     text_padding_weight: float = 0.01,
     zero_padding_weight: float = 0.0,
+    label_smoothing: float = 0.0,
 ) -> dict[str, torch.Tensor]:
     # Next-token shift
     tl = text_logits[:, :-1].contiguous()
@@ -91,7 +92,9 @@ def compute_hierarchical_translation_loss(
     if text_weight > 0:
         tl_flat = tl.reshape(-1, V_text)
         tt_flat = tt.reshape(-1)
-        ce = F.cross_entropy(tl_flat.float(), tt_flat, reduction="none").view(B, Tm1)
+        ce = F.cross_entropy(
+            tl_flat.float(), tt_flat, reduction="none", label_smoothing=label_smoothing
+        ).view(B, Tm1)
         tw = torch.ones_like(ce)
         is_pad = (tt == TEXT_PADDING) | (tt == END_OF_TEXT_PADDING) | (tt == IN_WORD_PADDING)
         tw = torch.where(is_pad, torch.full_like(tw, text_padding_weight), tw)
@@ -118,6 +121,7 @@ def compute_hierarchical_translation_loss(
             al[:, c].reshape(-1, V_audio).float(),
             at_safe[:, c].reshape(-1),
             reduction="none",
+            label_smoothing=label_smoothing,
         ).view(B, Tm1)
         per_cb.append(_masked_sum(ce_c) / denom)
     per_codebook = torch.stack(per_cb)  # [CB]
