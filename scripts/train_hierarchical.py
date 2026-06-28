@@ -185,7 +185,7 @@ from src.training.checkpointing import (
 from src.training.scheduler import WarmupCosineScheduler
 from src.training.codebook_schedule import codebook_weights
 from src.training.early_stop import early_stop_step
-from src.training.param_classify import is_depth_block
+from src.training.param_classify import depth_block_layer_index, is_depth_block
 from src.training.translation_loss import compute_hierarchical_translation_loss
 
 
@@ -473,17 +473,34 @@ def freeze_depth_internals(model, unfreeze_last_n_blocks: int = 0):
     # codebooks unmask -- the "staged" effect without mutating the optimizer mid-run.
     # They land in the `depth_blocks` low-LR group (get_param_groups via is_depth_block).
     if unfreeze_last_n_blocks > 0:
-        layers = getattr(model.depth_decoder, "layers", None)
-        if layers is None:
-            print("  [depth-unfreeze] WARNING: depth_decoder has no .layers; skipping")
+        # Name-based (NOT module-walk): the TPU smoke showed module-walk over
+        # `.layers` reported 0M, while this named_parameters() enumeration -- the
+        # same one the freeze loop above uses -- correctly sees the 617M of block
+        # params. Find the layer count, then unfreeze the last N layer indices.
+        idxs = {
+            depth_block_layer_index(name)
+            for name, _ in model.depth_decoder.named_parameters()
+        }
+        idxs.discard(None)
+        if not idxs:
+            print("  [depth-unfreeze] WARNING: no depth transformer-block params found; skipping")
         else:
-            n = min(unfreeze_last_n_blocks, len(layers))
+            n_layers = max(idxs) + 1
+            n = min(unfreeze_last_n_blocks, n_layers)
+            threshold = n_layers - n  # unfreeze indices [threshold, n_layers)
             uf = 0
-            for blk in list(layers)[-n:]:
-                for p in blk.parameters():
-                    p.requires_grad = True
-                    uf += p.numel()
-            print(f"  [depth-unfreeze] unfroze last {n}/{len(layers)} depth blocks "
+            for name, param in model.depth_decoder.named_parameters():
+                li = depth_block_layer_index(name)
+                if li is not None and li >= threshold:
+                    param.requires_grad = True
+                    uf += param.numel()
+            # Guard: an enabled unfreeze that matched 0 params is a silent no-op
+            # (the bug the smoke caught) -- fail loud instead.
+            assert uf > 0, (
+                f"depth-unfreeze matched 0 params for last {n}/{n_layers} blocks; "
+                "check depth-decoder naming (param_classify.depth_block_layer_index)"
+            )
+            print(f"  [depth-unfreeze] unfroze last {n}/{n_layers} depth blocks "
                   f"({uf / 1e6:.0f}M) -> low-LR depth_blocks group")
 
 

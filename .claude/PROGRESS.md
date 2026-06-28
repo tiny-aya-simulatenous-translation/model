@@ -26,6 +26,146 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-28T17:22:23Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:21:15Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:20:49Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:20:15Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:19:39Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:19:15Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:19:02Z | feat/v0.3-implementation@f9cf778 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/tests/test_param_classify.py`
+
+
+## 2026-06-28T17:18:51Z | feat/v0.3-implementation@f9cf778 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/param_classify.py`
+
+
+## 2026-06-28T17:18:37Z | feat/v0.3-implementation@f9cf778 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/param_classify.py`
+
+
+## 2026-06-28T17:13:43Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:12:47Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:12:12Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:11:25Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:10:22Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:09:58Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:09:39Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:09:14Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:08:48Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:07:00Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:06:39Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:06:31Z | feat/v0.3-implementation@f9cf778 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/tests/test_param_classify.py`
+
+
+## 2026-06-28T17:06:02Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:05:45Z | feat/v0.3-implementation@f9cf778 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T17:05:33Z | feat/v0.3-implementation@f9cf778 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/train_hierarchical.py`
+
+
+## 2026-06-28T17:05:01Z | feat/v0.3-implementation@f9cf778 | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/src/training/param_classify.py`
+
+
+## 2026-06-28T17:03:54Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:02:47Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:01:49Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:00:59Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T17:00:29Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:55:12Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:53:55Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:52:16Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:51:39Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:51:08Z | feat/v0.3-implementation@f9cf778 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
 ## 2026-06-28T16:50:25Z | feat/v0.3-implementation@a32accf | done | edit
 created `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3_smoke.yaml`
 
