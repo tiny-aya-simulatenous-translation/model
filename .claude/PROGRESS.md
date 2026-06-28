@@ -26,6 +26,25 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-28T16:50:25Z | feat/v0.3-implementation@a32accf | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3_smoke.yaml`
+
+
+## 2026-06-28T16:49:14Z | feat/v0.3-implementation@a32accf | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-28T16:45:13Z | feat/v0.3-implementation@a32accf | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-28T16:44:51Z | feat/v0.3-implementation@a32accf | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
 ## 2026-06-28T16:44:22Z | feat/v0.3-implementation@81a65f3 | done | exec
 cd /home/cataluna84/Workspace/tinyaya-stage2-scale
 
