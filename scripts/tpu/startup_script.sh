@@ -56,7 +56,14 @@ PROBE_FIRST="$(read_meta probe-first 0)"
 # tell preemptible runs from on-demand. We use it to set WANDB_RESUME=allow
 # so a preempt resumes the same wandb run instead of forking a new one.
 IS_SPOT="$(read_meta is-spot 0)"
+# Phase E sweep fleet: when `sweep-id` is set this host runs a `wandb agent`
+# (one independent trial stream) instead of a single-config training run, and
+# pulls the small pre-staged sweep subset from `sweep-data-gs-uri` (GCS) instead
+# of the full corpus from HF. Both empty for a normal training run.
+SWEEP_ID="$(read_meta sweep-id '')"
+SWEEP_DATA_GS_URI="$(read_meta sweep-data-gs-uri '')"
 echo "[startup] CONFIG_FILE=$CONFIG_FILE"
+echo "[startup] SWEEP_ID=${SWEEP_ID:-<unset>} SWEEP_DATA_GS_URI=${SWEEP_DATA_GS_URI:-<unset>}"
 echo "[startup] OVERLAY_GS_URI=${OVERLAY_GS_URI:-<unset>}"
 echo "[startup] REPO_TARBALL_GS_URI=${REPO_TARBALL_GS_URI:-<unset>}"
 echo "[startup] TPU_STRATEGY=$TPU_STRATEGY_META PROBE_FIRST=$PROBE_FIRST IS_SPOT=$IS_SPOT"
@@ -131,11 +138,28 @@ if WANDB_API_KEY="$(gcloud secrets versions access latest --secret="$SECRET_WAND
 fi
 
 # ----- 6. dataset to /mnt/data (resumable) -----
+sudo mkdir -p "$DATA_DIR"
+sudo chown "$USER:$USER" "$DATA_DIR"
+
+if [ -n "$SWEEP_DATA_GS_URI" ]; then
+    # Phase E sweep fleet: pull the SMALL pre-staged subset tarball from GCS
+    # (built by scripts/tpu/stage_sweep_subset.sh) instead of the full HF corpus.
+    # Avoids 8 parallel hosts rate-limiting HF and 8x extracting ~4M files.
+    if [ ! -f "$DATA_DIR/encoded/.unpacked" ]; then
+        echo "[startup] sweep mode: fetching subset from $SWEEP_DATA_GS_URI"
+        gcloud storage cp "$SWEEP_DATA_GS_URI" /tmp/sweep_subset.tar.gz
+        sudo mkdir -p "$DATA_DIR/encoded" "$DATA_DIR/splits"
+        sudo chown -R "$USER:$USER" "$DATA_DIR/encoded" "$DATA_DIR/splits"
+        # Tarball lays out encoded/ + splits/ at the top level -> extract into $DATA_DIR.
+        tar -xzf /tmp/sweep_subset.tar.gz -C "$DATA_DIR"
+        n_pt=$(find "$DATA_DIR/encoded" -maxdepth 1 -name '*.pt' | wc -l)
+        echo "[startup] sweep subset ready: $n_pt encoded .pt files"
+        touch "$DATA_DIR/encoded/.unpacked"
+    fi
+else
 # We deliberately do NOT set HF_HUB_ENABLE_HF_TRANSFER here: hf_transfer isn't
 # pinned in the lockfile. (The synthetic repo is ~11.7 GB across 9 batch
 # tarballs; the download dominates startup but is a one-time cost per host.)
-sudo mkdir -p "$DATA_DIR"
-sudo chown "$USER:$USER" "$DATA_DIR"
 uv run huggingface-cli download "$HF_DATASET" \
     --repo-type dataset \
     --local-dir "$DATA_DIR"
@@ -159,6 +183,7 @@ if ls "$DATA_DIR"/mimi_encoded_batch*.tar.gz >/dev/null 2>&1 \
     echo "[startup] extracted $n_pt encoded .pt files"
     touch "$DATA_DIR/encoded/.unpacked"
 fi
+fi  # end SWEEP_DATA_GS_URI branch
 
 # ----- 7. launch training with auto-restart in tmux -----
 # torch_xla's _XLAC.so dynamically links libpython3.12.so.1.0, which uv keeps
@@ -190,29 +215,51 @@ if [ "$PROBE_FIRST" = "1" ]; then
         2>&1 | tee /tmp/probe.log || echo "[startup] probe failed (non-fatal, continuing)"
 fi
 
-tmux new-session -d -s "$TMUX_SESSION" "
-    set -euo pipefail
-    ulimit -n 1048576
-    cd '$REPO_DIR'
-    echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
-    DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
-    XLA_USE_BF16=0 \
-    XLA_DOWNCAST_BF16=0 \
-    XLA_DISABLE_FUNCTIONALIZATION=0 \
-    XLA_NO_SPECIAL_SCALARS=1 \
-    LIBTPU_INIT_ARGS='--megascale_grpc_enable_xor_tracer=false --xla_tpu_enable_flash_attention=false' \
-    PT_XLA_DEBUG_LEVEL=1 \
-    XLA_PROFILER_PORT=9012 \
-    TPU_STRATEGY='$TPU_STRATEGY_META' \
-    LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
-    HF_TOKEN='$HF_TOKEN' \
-    WANDB_API_KEY='${WANDB_API_KEY:-}' \
-    PYTHONUNBUFFERED=1 \
-    uv run python -u scripts/train_hierarchical.py \
-        --config '$CONFIG_FILE' \
-        --resume auto 2>&1 | tee -a /tmp/train.log
-    echo \"[\$(date -Is)] training exited with status \$?\" | tee -a /tmp/train.log
-"
+if [ -n "$SWEEP_ID" ]; then
+    # Phase E sweep fleet: this host runs an independent wandb agent (single-host
+    # v6e-8 trials pulled from the shared sweep). The agent's child processes
+    # inherit the exported TPU env below.
+    echo "[startup] sweep mode: launching wandb agent $SWEEP_ID"
+    tmux new-session -d -s "$TMUX_SESSION" "
+        set -uo pipefail
+        ulimit -n 1048576
+        cd '$REPO_DIR'
+        echo \"[\$(date -Is)] launching wandb agent $SWEEP_ID\" | tee -a /tmp/train.log
+        export DEVICE_BACKEND=tpu PJRT_DEVICE=TPU
+        export XLA_USE_BF16=0 XLA_DOWNCAST_BF16=0 XLA_DISABLE_FUNCTIONALIZATION=0 XLA_NO_SPECIAL_SCALARS=1
+        export LIBTPU_INIT_ARGS='--megascale_grpc_enable_xor_tracer=false --xla_tpu_enable_flash_attention=false'
+        export TPU_STRATEGY='$TPU_STRATEGY_META'
+        export LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}'
+        export HF_TOKEN='$HF_TOKEN' WANDB_API_KEY='${WANDB_API_KEY:-}'
+        export PYTHONUNBUFFERED=1 TOKENIZERS_PARALLELISM=false
+        uv run wandb agent $SWEEP_ID 2>&1 | tee -a /tmp/train.log
+        echo \"[\$(date -Is)] wandb agent exited with status \$?\" | tee -a /tmp/train.log
+    "
+else
+    tmux new-session -d -s "$TMUX_SESSION" "
+        set -euo pipefail
+        ulimit -n 1048576
+        cd '$REPO_DIR'
+        echo \"[\$(date -Is)] launching train_hierarchical.py\" | tee -a /tmp/train.log
+        DEVICE_BACKEND=tpu PJRT_DEVICE=TPU \
+        XLA_USE_BF16=0 \
+        XLA_DOWNCAST_BF16=0 \
+        XLA_DISABLE_FUNCTIONALIZATION=0 \
+        XLA_NO_SPECIAL_SCALARS=1 \
+        LIBTPU_INIT_ARGS='--megascale_grpc_enable_xor_tracer=false --xla_tpu_enable_flash_attention=false' \
+        PT_XLA_DEBUG_LEVEL=1 \
+        XLA_PROFILER_PORT=9012 \
+        TPU_STRATEGY='$TPU_STRATEGY_META' \
+        LD_LIBRARY_PATH='$LIBPYTHON_DIR:\${LD_LIBRARY_PATH:-}' \
+        HF_TOKEN='$HF_TOKEN' \
+        WANDB_API_KEY='${WANDB_API_KEY:-}' \
+        PYTHONUNBUFFERED=1 \
+        uv run python -u scripts/train_hierarchical.py \
+            --config '$CONFIG_FILE' \
+            --resume auto 2>&1 | tee -a /tmp/train.log
+        echo \"[\$(date -Is)] training exited with status \$?\" | tee -a /tmp/train.log
+    "
+fi
 # NOTE: 'while true' supervisor loop intentionally removed.
 # GCP spot TPU preemption tears down the VM, not the python process,
 # so a process-level supervisor cannot recover. The QR's spot lifecycle

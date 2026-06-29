@@ -26,6 +26,109 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-29T09:08:42Z | feat/v0.3-implementation@efc62dd | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T09:08:32Z | feat/v0.3-implementation@efc62dd | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/launch_sweep_fleet.sh`
+
+
+## 2026-06-29T09:08:07Z | feat/v0.3-implementation@efc62dd | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/stage_sweep_subset.sh`
+
+
+## 2026-06-29T09:07:14Z | feat/v0.3-implementation@efc62dd | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/launch_qr.sh`
+
+
+## 2026-06-29T09:07:05Z | feat/v0.3-implementation@efc62dd | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/launch_qr.sh`
+
+
+## 2026-06-29T09:06:44Z | feat/v0.3-implementation@efc62dd | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/startup_script.sh`
+
+
+## 2026-06-29T09:06:01Z | feat/v0.3-implementation@efc62dd | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/startup_script.sh`
+
+
+## 2026-06-29T09:05:50Z | feat/v0.3-implementation@efc62dd | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/startup_script.sh`
+
+
+## 2026-06-29T09:05:26Z | feat/v0.3-implementation@efc62dd | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/tpu/startup_script.sh`
+
+
+## 2026-06-29T09:04:46Z | feat/v0.3-implementation@efc62dd | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T09:04:29Z | feat/v0.3-implementation@efc62dd | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/tests/test_build_sweep_subset.py`
+
+
+## 2026-06-29T09:04:08Z | feat/v0.3-implementation@efc62dd | done | edit
+created `/home/cataluna84/Workspace/tinyaya-stage2-scale/scripts/build_sweep_subset.py`
+
+
+## 2026-06-29T08:59:16Z | feat/v0.3-implementation@efc62dd | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T08:57:16Z | feat/v0.3-implementation@efc62dd | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T08:56:42Z | feat/v0.3-implementation@efc62dd | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T08:47:40Z | feat/v0.3-implementation@efc62dd | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T08:47:18Z | feat/v0.3-implementation@efc62dd | done | exec
+for i in $(seq 1 40); do
+
+
+## 2026-06-29T08:47:08Z | feat/v0.3-implementation@efc62dd | done | exec
+timeout 120 gcloud compute tpus queued-resources create tinyaya-sweep-probe-qr \
+
+
+## 2026-06-29T08:39:51Z | feat/v0.3-implementation@efc62dd | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T08:38:21Z | feat/v0.3-implementation@efc62dd | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T08:37:43Z | feat/v0.3-implementation@efc62dd | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T08:36:48Z | feat/v0.3-implementation@efc62dd | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
 ## 2026-06-29T08:36:29Z | feat/v0.3-implementation@af2eb6e | done | exec
 cd /home/cataluna84/Workspace/tinyaya-stage2-scale
 
