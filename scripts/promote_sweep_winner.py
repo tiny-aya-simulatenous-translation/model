@@ -43,6 +43,7 @@ PARAM_MAP: dict[str, tuple[str, str]] = {
     "val_every": ("logging", "val_every"),
     "val_on_tpu": ("logging", "val_on_tpu"),
     "lora_r": ("lora", "r"),
+    "lora_dropout": ("lora", "dropout"),  # Phase E regularization knob
     # lora_alpha_mult -> lora.alpha (= mult * r); resolved in resolve_updates().
 }
 
@@ -174,8 +175,9 @@ def main() -> None:
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--config", required=True, help="config YAML to patch in place")
     p.add_argument("--sweep", help="W&B sweep path <entity>/<project>/<sweep_id>")
-    p.add_argument("--metric", default="val/audio_loss",
-                   help="metric to minimise when picking the winner (default val/audio_loss)")
+    p.add_argument("--metric", default="val/composite",
+                   help="metric to minimise when picking the winner (default val/composite; "
+                        "v0.3 Phase D. Use val/audio_loss for the legacy v2 sweep)")
     p.add_argument("--set", nargs="*", default=[], dest="set_pairs",
                    help="explicit key=value HPs (flat swept names)")
     p.add_argument("--dry-run", action="store_true", help="print changes, don't write")

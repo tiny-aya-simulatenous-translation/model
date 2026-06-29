@@ -1,0 +1,103 @@
+# TPU v6e-8 PROXY config for the v0.3 regularization sweep (sweeps/sweep_stage2_v3.yaml).
+#
+# Same recipe as stage2_tpu_v6e_v3.yaml (all Phase A/C/D levers ON) but with a
+# SHORT proxy horizon and NO checkpoints, so `wandb agent` can run many trials
+# sequentially on one v6e-8. The sweep grid overrides only the *recipe* knobs
+# (lr_lora, lora_r, lora_dropout, weight_decay, lora_alpha_mult); the horizon
+# lives here so it never gets promoted into the production config.
+#
+# PREREQUISITE: repoint the data loader to the synthetic `tr-hi-mimi-encoded`
+# corpus before running the sweep (see docs/v0.3-implementation-plan.md).
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 32
+  pin_memory: false
+
+train:
+  weight_decay: 0.05
+  num_codebooks: 8
+  batch_size: 8
+  grad_accum: 4
+  # Proxy horizon: long enough for the regularizers to separate runs past the
+  # memorization point, short enough to run many trials.
+  max_steps: 2500
+  warmup_steps: 300
+  min_lr_ratio: 0.0
+  # Shorter grace than production (8) so plateaued proxy trials die sooner.
+  early_stop_patience: 4
+  early_stop_min_delta: 0.001
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  log_grad_norm: true
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: false
+
+loss:
+  text_weight: 0.2
+  audio_weight: 1.0
+  # Phase D (same as production v3).
+  text_weight_start: 0.5
+  text_weight_end: 0.3
+  text_weight_curriculum_frac: 0.25
+  text_weight_quantum: 0.05
+  composite_text_w: 0.4
+  composite_audio_w: 0.6
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
+  # Phase A.
+  label_smoothing: 0.1
+  # Phase C.
+  per_codebook_multipliers: [1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.0, 2.0]
+  progressive_unmask_fraction: 0.10
+  unmask_k0: 1
+
+lora:
+  # r / alpha / dropout / weight_decay are SWEPT (overridden per trial); the
+  # values here are just defaults for a bare run of this config.
+  r: 16
+  alpha: 32
+  dropout: 0.08
+  target_modules: [q_proj, v_proj, embed_tokens]
+  lora_exclude_top: 2
+  num_full_ft_layers: 0
+  depth_unfreeze_blocks: 0
+
+optim:
+  lr_lora: 1.0e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 1.0e-4
+  lr_depth_blocks: 1.0e-5
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 25
+  save_every: 0                   # proxy: NO checkpoints
+  audio_every: 1000000
+  val_every: 250
+  val_max_batches: 25
+  val_on_tpu: true
+  diag_metrics: false
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-v3-proxy
+  keep_last_n: 0
+  keep_local_checkpoints: false
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-v3-sweep
+
+perf:
+  enabled: true
+  warmup_skip_steps: 25
+  xprof_trace_labels: false

@@ -938,6 +938,8 @@ def build_parser():
     p.add_argument("--lora_r", type=int, default=None)
     p.add_argument("--lora_alpha_mult", type=int, default=None,
                    help="lora.alpha = lora_alpha_mult * lora_r")
+    p.add_argument("--lora_dropout", type=float, default=None,
+                   help="lora.dropout (Phase E sweep knob)")
     return p
 
 
@@ -949,7 +951,7 @@ def main():
         # lora_r/lora_alpha_mult map to lora.r/lora.alpha (name mismatch) and
         # `sweep` is a control flag -- all handled explicitly below.
         if k not in ("config", "dataset_mode", "data_dir", "resume",
-                     "sweep", "lora_r", "lora_alpha_mult")
+                     "sweep", "lora_r", "lora_alpha_mult", "lora_dropout")
     }
     cfg = load_config(args.config, overrides)
 
@@ -962,6 +964,8 @@ def main():
     if args.lora_alpha_mult is not None:
         _r = cfg.get("lora", {}).get("r", 16)
         cfg.setdefault("lora", {})["alpha"] = args.lora_alpha_mult * _r
+    if args.lora_dropout is not None:
+        cfg.setdefault("lora", {})["dropout"] = args.lora_dropout
     if args.sweep:
         print(f"[sweep] overrides -> lr_lora={cfg['optim'].get('lr_lora')} "
               f"lr_depth={cfg['optim'].get('lr_depth')} "
@@ -1462,6 +1466,9 @@ def main():
             wandb.define_metric("train/*", step_metric="global_step")
             wandb.define_metric("perf/*", step_metric="global_step")
             wandb.define_metric("val/*", step_metric="global_step")
+            # Phase E sweep: optimise on the BEST (min) composite, not the last
+            # value, so early-stopped trials are compared at their best point.
+            wandb.define_metric("val/composite", summary="min", step_metric="global_step")
             wandb.define_metric("audio/*", step_metric="global_step")
             wandb.define_metric("mem/*", step_metric="global_step")
             if is_tpu:

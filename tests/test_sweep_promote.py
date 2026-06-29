@@ -25,8 +25,10 @@ import yaml
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 SWEEP_YAML = REPO / "sweeps" / "sweep_stage2.yaml"
+SWEEP_V3_YAML = REPO / "sweeps" / "sweep_stage2_v3.yaml"
 PROXY_CFG = REPO / "configs" / "tpu" / "stage2_tpu_v6e_proxy.yaml"
 PROD_CFG = REPO / "configs" / "tpu" / "stage2_tpu_v6e_v2.yaml"
+V3_CFG = REPO / "configs" / "tpu" / "stage2_tpu_v6e_v3.yaml"
 
 
 def _load_promote():
@@ -148,6 +150,42 @@ def test_sweep_command_points_at_existing_proxy_config():
     cmd = sweep["command"]
     cfg_ref = cmd[cmd.index("--config") + 1]
     assert (REPO / cfg_ref).exists(), f"sweep --config path does not exist: {cfg_ref}"
+
+
+# --------------------------------------------------------------------------
+# Phase E: v0.3 regularization sweep (sweep_stage2_v3.yaml)
+# --------------------------------------------------------------------------
+
+def test_lora_dropout_maps_to_lora_dropout():
+    assert promote.PARAM_MAP["lora_dropout"] == ("lora", "dropout")
+
+
+def test_v3_sweep_every_param_is_promotable():
+    grid = yaml.safe_load(SWEEP_V3_YAML.read_text())["parameters"]
+    handled = set(promote.PARAM_MAP) | {"lora_alpha_mult"}
+    unmapped = set(grid) - handled
+    assert not unmapped, f"v3 sweep params with no promote mapping: {unmapped}"
+
+
+def test_v3_sweep_optimises_composite():
+    sweep = yaml.safe_load(SWEEP_V3_YAML.read_text())
+    assert sweep["metric"]["name"] == "val/composite"
+    assert sweep["metric"]["goal"] == "minimize"
+
+
+def test_v3_sweep_command_points_at_v3_proxy_config():
+    sweep = yaml.safe_load(SWEEP_V3_YAML.read_text())
+    cmd = sweep["command"]
+    cfg_ref = cmd[cmd.index("--config") + 1]
+    assert (REPO / cfg_ref).exists(), f"v3 sweep --config missing: {cfg_ref}"
+    assert cfg_ref.endswith("stage2_tpu_v6e_v3_proxy.yaml")
+
+
+def test_v3_mapping_sections_and_dropout_key_exist():
+    cfg = yaml.safe_load(V3_CFG.read_text())
+    for _param, (section, _key) in promote.PARAM_MAP.items():
+        assert section in cfg, f"v3 config missing section '{section}'"
+    assert "dropout" in cfg["lora"], "v3 config lora.dropout must exist for the sweep"
 
 
 if __name__ == "__main__":
