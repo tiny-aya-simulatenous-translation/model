@@ -1,14 +1,20 @@
-# v0.3 SMOKE: validate the two TPU-specific Phase-C bits on a short run.
-#   1. Unmask recompile caching (Phase C2): k0=6 + unmask_fraction=0.5 over 8 steps
+# v0.3 SMOKE: validate the Phase A + C + D levers all fire on a short run.
+#   A (regularization): lora.dropout=0.08 in the LoRA config, label_smoothing=0.1
+#      on the TRAIN loss, and early stopping armed (patience=2) so the early-stop
+#      path executes on the composite metric.
+#   C2 (unmask recompile caching): k0=6 + unmask_fraction=0.5 over 8 steps
 #      -> K = 6,7,7,8,8,8,8,8 => transitions @ step1 (6->7) and step3 (7->8), and
 #      REPEATS @ step2 (7) + step4+ (8). So we should see exactly 3 distinct
 #      cb_weights graphs (K=6,7,8) compile once each, and the repeats hit the cache
 #      (no recompile). Confirms the cache-by-value design.
-#   2. Depth-unfreeze grad flow (Phase C3): depth_unfreeze_blocks=2 -> a `depth_blocks`
-#      param group at lr 1e-5 must appear, and its [diag] gradnorm must be > 0
-#      (the depth decoder predicts cb1-7, supervised from step 0 since k0=6).
+#   C3 (depth-unfreeze): depth_unfreeze_blocks=0 = production parity (OOM at 2 on
+#      v6e-8); mechanism already validated live (206M unfrozen, depth_blocks group).
+#   D (multitask): val runs (val_every=4 -> steps 4 & 8) so `val/composite` is
+#      computed and best_by_val + early stopping select on it; text_weight
+#      curriculum (0.5->0.3 over the first 4 steps, quantised) fires with a
+#      bounded number of recompiles.
 #
-# Short + no val/checkpoints for speed. Usage:
+# Usage:
 #   bash scripts/tpu/launch_release.sh configs/tpu/stage2_tpu_v6e_v3_smoke.yaml
 
 backend: tpu
@@ -30,7 +36,8 @@ train:
   max_steps: 8
   warmup_steps: 1
   min_lr_ratio: 0.0
-  early_stop_patience: 0          # off for the smoke
+  early_stop_patience: 2          # Phase A/D: arm early-stop on the composite metric
+  early_stop_min_delta: 0.001
   compile_warmup_steps: 1
   enable_clip_grad_norm: false
   log_grad_norm: true
@@ -52,6 +59,14 @@ loss:
   per_codebook_multipliers: [1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.0, 2.0]
   progressive_unmask_fraction: 0.5
   unmask_k0: 6
+  # Phase D: curriculum ramps over the first 4 of 8 steps so it's clearly visible;
+  # composite (audio-heavier) is the best_by_val + early-stop metric.
+  text_weight_start: 0.5
+  text_weight_end: 0.3
+  text_weight_curriculum_frac: 0.5
+  text_weight_quantum: 0.05
+  composite_text_w: 0.4
+  composite_audio_w: 0.6
 
 lora:
   r: 16
@@ -79,8 +94,8 @@ logging:
   log_every: 1
   save_every: 0                   # no checkpoints for the smoke
   audio_every: 100000
-  val_every: 100                  # > max_steps => never (skip val)
-  val_max_batches: 10
+  val_every: 4                    # Phase D: val at steps 4 & 8 -> composite + early-stop fire
+  val_max_batches: 4
   val_on_tpu: true
   diag_metrics: true              # need [diag] gradnorm to see depth_blocks
   save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-v3-smoke

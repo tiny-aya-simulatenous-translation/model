@@ -26,6 +26,89 @@ moved to `.claude/archive/PROGRESS-YYYY-Qn.md` by the
 
 ---
 
+## 2026-06-29T04:42:23Z | feat/v0.3-implementation@91d4bf2 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T04:41:08Z | feat/v0.3-implementation@91d4bf2 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T04:41:00Z | feat/v0.3-implementation@91d4bf2 | done | exec
+timeout 2800 gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu --zone=europe-west4-a --project=ml-pipelines-315702 --worker=0 --command='
+
+
+## 2026-06-29T04:39:55Z | feat/v0.3-implementation@91d4bf2 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T04:39:40Z | feat/v0.3-implementation@91d4bf2 | done | exec
+timeout 2800 gcloud compute tpus tpu-vm ssh tinyaya-stage2-spot-v6e8-eu --zone=europe-west4-a --project=ml-pipelines-315702 --worker=0 --command='
+
+
+## 2026-06-29T04:39:12Z | feat/v0.3-implementation@91d4bf2 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T04:37:22Z | feat/v0.3-implementation@91d4bf2 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T04:35:54Z | feat/v0.3-implementation@91d4bf2 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale; sed -n '40,120p' scripts/tpu/hot_redeploy.sh
+
+
+## 2026-06-29T04:35:27Z | feat/v0.3-implementation@91d4bf2 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T04:35:06Z | feat/v0.3-implementation@91d4bf2 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3_smoke.yaml`
+
+
+## 2026-06-29T04:35:02Z | feat/v0.3-implementation@91d4bf2 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3_smoke.yaml`
+
+
+## 2026-06-29T04:34:52Z | feat/v0.3-implementation@91d4bf2 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3_smoke.yaml`
+
+
+## 2026-06-29T04:34:48Z | feat/v0.3-implementation@91d4bf2 | done | edit
+edited `/home/cataluna84/Workspace/tinyaya-stage2-scale/configs/tpu/stage2_tpu_v6e_v3_smoke.yaml`
+
+
+## 2026-06-29T04:31:45Z | feat/v0.3-implementation@91d4bf2 | fail | verify
+verify: 11 passed, 1 failed out of 12 on Stop
+
+FAIL [1] # the TPU↔GPU seam holds: torch_xla must NOT leak into shared model/data code
+    src/model/scan_utils.py:125:        from torch_xla.experimental.scan_layers import scan_layers
+
+
+## 2026-06-29T04:31:33Z | feat/v0.3-implementation@91d4bf2 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T04:31:11Z | feat/v0.3-implementation@91d4bf2 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
+## 2026-06-29T04:31:01Z | feat/v0.3-implementation@91d4bf2 | done | exec
+cd /home/cataluna84/Workspace/tinyaya-stage2-scale
+
+
 ## 2026-06-29T04:30:49Z | feat/v0.3-implementation@6198a56 | done | exec
 cd /home/cataluna84/Workspace/tinyaya-stage2-scale
 
