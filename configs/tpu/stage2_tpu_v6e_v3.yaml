@@ -63,24 +63,20 @@ train:
   final_canonical_save: true
 
 loss:
-  # text_weight: static fallback used only when the Phase-D curriculum is OFF
-  # (text_weight_curriculum_frac=0 or start==end).
-  text_weight: 0.2
+  # AUDIO-ONLY: the synthetic tr-hi-mimi-encoded corpus ships NO text alignments
+  # (verified: 0 _src/_tgt.json in the batch tarballs), so the text/inner-monologue
+  # stream can't be supervised (text loss is structurally 0 -- same as v0.1). We
+  # therefore train audio-only: text_weight=0, composite = val_audio. The Phase-D
+  # curriculum is disabled (inert without text). Re-enable all of this only if
+  # alignments are ever generated for this corpus.
+  text_weight: 0.0
   audio_weight: 1.0
-  # Phase D: multitask balance.
-  #  - text_weight CURRICULUM: protect the inner-monologue early (audio heads are
-  #    still random), then shift capacity to audio. Anneal start->end over the
-  #    first `curriculum_frac` of the run; quantised so XLA recompiles only a few
-  #    times (a smooth per-step ramp would recompile every step).
   text_weight_start: 0.5
   text_weight_end: 0.3
-  text_weight_curriculum_frac: 0.25
+  text_weight_curriculum_frac: 0.0   # disabled (no text supervision on this data)
   text_weight_quantum: 0.05
-  #  - composite val metric = weighted mean of the RAW stream losses (audio-heavier);
-  #    this is what best_by_val + early stopping select on, so neither stream can be
-  #    sacrificed to game the other.
-  composite_text_w: 0.4
-  composite_audio_w: 0.6
+  composite_text_w: 0.0
+  composite_audio_w: 1.0              # composite = val_audio
   text_padding_weight: 0.01
   zero_padding_weight: 0.0
   # Phase A: label smoothing (applied to the TRAIN loss only; the val call
