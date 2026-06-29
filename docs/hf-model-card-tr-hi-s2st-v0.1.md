@@ -41,6 +41,17 @@ metrics:
 > fixes the text stream (the Phase-0 padding-loss fix) so the inner-monologue
 > actually learns. If you want the later recipe, use v0.2.
 
+> ## 📒 Data clarification
+> This checkpoint was trained on the project's **synthetic** corpus —
+> [`tiny-aya-translate/tr-hi-mimi-encoded`](https://huggingface.co/datasets/tiny-aya-translate/tr-hi-mimi-encoded)
+> (FLORES + OPUS-100 + machine-translated conversational text, rendered with
+> multi-voice TTS; **1,178,302** train / 62,036 val pairs, verified from the
+> training log). Earlier wording in this card called the data "FLEURS" — that
+> was a mislabel: **FLORES** (parallel *text*) is not **FLEURS** (read-speech
+> audio), and no FLEURS audio is in this set. *(Note: the later v0.2 run
+> accidentally trained on a FLEURS sibling dataset; v0.1 here used the intended
+> synthetic data.)*
+
 # TinyAya Stage 2 — Turkish ↔ Hindi Speech-to-Speech Translation (LoRA)
 
 Stage-2 simultaneous-translation adapter for Turkish↔Hindi **speech-to-speech**
@@ -65,7 +76,10 @@ custom projection / Moshi depth-decoder / audio-head / embedding tensors.
 >   (NOT Apache). Not included here; you must obtain it from Cohere and
 >   comply with its terms.
 > - **Moshi / Mimi** (depth decoder + audio codec) → **MIT**.
-> - **FLEURS** source data → **CC BY 4.0**.
+> - **Source data** (FLORES, OPUS-100, conversational MT) and the **TTS-generated
+>   audio** → see the [dataset card](https://huggingface.co/datasets/tiny-aya-translate/tr-hi-mimi-encoded)
+>   for per-source terms (e.g. FLORES is CC BY-SA 4.0; OPUS-100 sub-corpora and
+>   the TTS-model outputs carry their own licenses). Verify before redistribution.
 
 ## What this is
 
@@ -76,7 +90,7 @@ custom projection / Moshi depth-decoder / audio-head / embedding tensors.
 | Method | LoRA (+ trained projection/heads/embeds), bf16, FSDPv2 SPMD |
 | Hardware | Cloud TPU v6e-8 (single host), via Google TRC |
 | Steps | 15,000 (effective batch 256) |
-| Data | `tiny-aya-translate/tr-hi-mimi-encoded` (Mimi-encoded FLEURS TR/HI) |
+| Data | [`tiny-aya-translate/tr-hi-mimi-encoded`](https://huggingface.co/datasets/tiny-aya-translate/tr-hi-mimi-encoded) — Mimi-encoded **synthetic** TR↔HI parallel speech (FLORES + OPUS-100 + conversational MT, multi-voice TTS); ~1.18M train pairs |
 
 ## Training procedure
 
@@ -114,8 +128,10 @@ the YAML `model-index` + below.
 
 - **Intended**: research on low-resource speech-to-speech translation and
   simultaneous translation; a Stage-2 checkpoint, not a production system.
-- **Limitations**: trained on read-speech (FLEURS) — expect degradation on
-  spontaneous/noisy audio; two language directions only; **the text stream did
+- **Limitations**: trained on **synthetic multi-voice TTS** audio (FLORES /
+  OPUS-100 / conversational text) — expect degradation on real, spontaneous, or
+  noisy audio and on voices outside the TTS set; two language directions only;
+  **the text stream did
   not learn in this version** (use v0.2 for text); generation is autoregressive
   and not optimized for latency here.
 - **History (transparency)**: the run was a spot v6e-8 (preemptible); an
@@ -124,8 +140,9 @@ the YAML `model-index` + below.
 
 ## Bias, risks & limitations
 
-Trained on FLEURS (read speech, limited speakers/domains); quality and fairness
-across dialects, accents, code-switching, and spontaneous speech are untested.
+Trained on synthetic multi-voice TTS speech (FLORES / OPUS-100 / conversational
+text; a fixed set of TTS voices) — quality and fairness across real speakers,
+dialects, accents, code-switching, and spontaneous speech are untested.
 Speech translation can mistranslate, omit, or fabricate content — outputs must
 not be relied upon for high-stakes communication. As noted above, the text /
 inner-monologue stream is not functional in this version.
