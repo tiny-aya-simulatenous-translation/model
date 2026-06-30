@@ -1,0 +1,109 @@
+# TPU v6e-16 PROXY config for the v0.3-SCALE capacity sweep.
+#
+# WHY THIS EXISTS
+# ---------------
+# v0.3 tuned REGULARIZATION to fix the 200K-subset overfit (winner: r=8 /
+# dropout 0.15 / wd 0.10 / targets q,v,embed). In the SCALE regime (full corpus,
+# multi-host, global batch 256) overfitting is no longer the binding constraint,
+# so that winner likely UNDER-fits. This proxy is the base for a 2-stage W&B
+# sweep that pushes the *capacity* axes instead:
+#   Stage 1 (grid):  target_modules x use_rslora x lora_exclude_top   (structure)
+#   Stage 2 (bayes): rank {8,16,32,64} x lr_lora (log)                (lr x rank)
+# The sweep overrides only the *recipe* knobs (via --sweep CLI args); the proxy
+# HORIZON + checkpointing live here so promote_sweep_winner never carries them.
+#
+# DE-REGULARIZED defaults (vs the b256 winner): dropout 0.15->0.05, wd 0.10->0.01.
+# Global batch = batch_size x grad_accum x 16 chips = 4 x 4 x 16 = 256 (same
+# optimization regime as the b256 baseline = arm 0). Per-chip batch 4 is
+# validated-safe (v6e NaN'd at 16/chip).
+#
+# Checkpointing is ON and save_dir is namespaced by the W&B run id at runtime
+# (train_hierarchical.py, --sweep) so EVERY trial keeps ALL its checkpoints in an
+# isolated dir with no step-filename collisions across the sequential sweep.
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 32
+  pin_memory: false
+
+train:
+  weight_decay: 0.01              # de-regularized (overfitting isn't the constraint)
+  num_codebooks: 8
+  batch_size: 4                   # per-chip (validated safe); 4 x 4 x 16 = global 256
+  grad_accum: 4
+  max_steps: 1500                 # common proxy horizon (all arms compared here)
+  warmup_steps: 200
+  min_lr_ratio: 0.0
+  early_stop_patience: 0          # OFF -- Hyperband (sweep yaml) culls, not early-stop
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: true     # B2: global-norm clip for long-horizon stability
+  clip_grad_norm: 1.0
+  log_grad_norm: true
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: false
+
+loss:
+  # AUDIO-ONLY (corpus has no text alignments).
+  text_weight: 0.0
+  audio_weight: 1.0
+  text_weight_curriculum_frac: 0.0
+  composite_text_w: 0.0
+  composite_audio_w: 1.0
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
+  label_smoothing: 0.1
+  per_codebook_multipliers: [1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.0, 2.0]
+  progressive_unmask_fraction: 0.10
+  unmask_k0: 1
+
+lora:
+  # Stage-1 fixes r=16; Stage-2 sweeps r via --lora_r (alpha tracks via
+  # --lora_alpha_mult). use_rslora/target_modules/lora_exclude_top are swept.
+  r: 16
+  alpha: 32                       # 2 x r (rsLoRA keeps alpha at this convention)
+  dropout: 0.05                   # de-regularized
+  use_rslora: false               # swept in Stage 1; true in Stage 2 (rank>=16)
+  target_modules: [q_proj, v_proj, embed_tokens]   # baseline; swept in Stage 1
+  lora_exclude_top: 2             # baseline; one exclude_top=0 probe in Stage 1
+  num_full_ft_layers: 0
+  depth_unfreeze_blocks: 0
+
+optim:
+  lr_lora: 2.0e-4                 # Stage-1 fixed conservative; Stage-2 sweeps (log)
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 1.0e-4
+  lr_depth_blocks: 1.0e-5
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 25
+  save_every: 500                 # CHECKPOINT every 500 steps (resumable + retained)
+  audio_every: 1000000
+  val_every: 250                  # 3 val cycles before Hyperband min_iter=750
+  val_max_batches: 25
+  val_on_tpu: true
+  diag_metrics: false
+  # Run-id-namespaced at runtime -> gs://.../stage2-scale-sweep/<wandb_run_id>/
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-scale-sweep
+  keep_last_n: 0                  # keep ALL checkpoints per trial
+  keep_local_checkpoints: false
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: scale-sweep     # each trial gets its own run id from the agent
+
+perf:
+  enabled: true
+  warmup_skip_steps: 25
+  xprof_trace_labels: false

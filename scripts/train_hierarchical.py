@@ -940,7 +940,35 @@ def build_parser():
                    help="lora.alpha = lora_alpha_mult * lora_r")
     p.add_argument("--lora_dropout", type=float, default=None,
                    help="lora.dropout (Phase E sweep knob)")
+    # Capacity-sweep knobs (scale phase): structural axes for the v0.3-scale sweep.
+    p.add_argument("--lora_exclude_top", type=int, default=None,
+                   help="lora.lora_exclude_top (# top layers left frozen; sweep knob)")
+    p.add_argument("--use_rslora", type=lambda s: s.lower() in ("1", "true", "yes"),
+                   default=None, help="lora.use_rslora (alpha/sqrt(r) rank-stable scaling)")
+    p.add_argument("--target_modules", type=str, default=None,
+                   help='lora.target_modules as a JSON list or comma/space-separated '
+                        'string (W&B sweep categorical, e.g. \'["q_proj","v_proj"]\')')
     return p
+
+
+def _parse_target_modules(raw):
+    """Parse a --target_modules sweep value into a list of module-name strings.
+
+    W&B serializes a list categorical as a JSON string ('["q_proj","v_proj"]') or
+    it can arrive comma/space-separated; accept all forms. A single bare name
+    returns a one-element list.
+    """
+    if isinstance(raw, (list, tuple)):
+        return [str(x) for x in raw]
+    s = str(raw).strip()
+    try:
+        val = json.loads(s)
+        if isinstance(val, list):
+            return [str(x) for x in val]
+    except (ValueError, TypeError):
+        pass
+    cleaned = s.strip("[]").replace('"', "").replace("'", "").replace(",", " ")
+    return [tok for tok in cleaned.split() if tok]
 
 
 def main():
@@ -949,9 +977,11 @@ def main():
         k: v
         for k, v in vars(args).items()
         # lora_r/lora_alpha_mult map to lora.r/lora.alpha (name mismatch) and
-        # `sweep` is a control flag -- all handled explicitly below.
+        # `sweep` is a control flag -- all handled explicitly below. The capacity
+        # knobs (lora_exclude_top/use_rslora/target_modules) also map under `lora`.
         if k not in ("config", "dataset_mode", "data_dir", "resume",
-                     "sweep", "lora_r", "lora_alpha_mult", "lora_dropout")
+                     "sweep", "lora_r", "lora_alpha_mult", "lora_dropout",
+                     "lora_exclude_top", "use_rslora", "target_modules")
     }
     cfg = load_config(args.config, overrides)
 
@@ -966,6 +996,13 @@ def main():
         cfg.setdefault("lora", {})["alpha"] = args.lora_alpha_mult * _r
     if args.lora_dropout is not None:
         cfg.setdefault("lora", {})["dropout"] = args.lora_dropout
+    # Capacity-sweep structural knobs (scale phase).
+    if args.lora_exclude_top is not None:
+        cfg.setdefault("lora", {})["lora_exclude_top"] = args.lora_exclude_top
+    if args.use_rslora is not None:
+        cfg.setdefault("lora", {})["use_rslora"] = args.use_rslora
+    if args.target_modules is not None:
+        cfg.setdefault("lora", {})["target_modules"] = _parse_target_modules(args.target_modules)
     if args.sweep:
         print(f"[sweep] overrides -> lr_lora={cfg['optim'].get('lr_lora')} "
               f"lr_depth={cfg['optim'].get('lr_depth')} "
@@ -1039,6 +1076,7 @@ def main():
         num_full_ft_layers=_lora_cfg.get("num_full_ft_layers", 0),
         lora_exclude_top=_lora_cfg.get("lora_exclude_top", 2),
         lora_dropout=_lora_cfg.get("dropout", 0.0),
+        use_rslora=bool(_lora_cfg.get("use_rslora", False)),
     )
     freeze_depth_internals(
         model, unfreeze_last_n_blocks=int(_lora_cfg.get("depth_unfreeze_blocks", 0))
@@ -1338,6 +1376,9 @@ def main():
     # rank_0..rank_3. Pattern: docs.wandb.ai/guides/track/log/
     # distributed-training#track-all-processes-to-a-single-run
     use_wandb = cfg["logging"]["use_wandb"]
+    # Shared W&B run id (set by the multi-host rendezvous below on TPU). Initialised
+    # here so it is always defined and can namespace the sweep checkpoint dir.
+    run_id = None
     if use_wandb:
         import platform
         import re
@@ -1519,6 +1560,18 @@ def main():
     # stage to a temp dir and gsutil-upload when the dest is gs://. Only
     # create local destinations here.
     save_dir = str(cfg["logging"]["save_dir"])
+    # Sweep trials share one save_dir from the proxy config; namespace it by the
+    # (rendezvous-shared) W&B run id so every trial keeps ALL its checkpoints in an
+    # isolated dir with no step-filename collisions across the sequential sweep. All
+    # hosts share one run id via the GCS rendezvous, so the path is identical on
+    # every host of the multi-host slice.
+    if args.sweep:
+        if run_id is None and use_wandb and getattr(wandb, "run", None) is not None:
+            run_id = wandb.run.id
+        if run_id:
+            save_dir = save_dir.rstrip("/") + "/" + str(run_id)
+            if is_main:
+                print(f"[sweep] namespaced save_dir -> {save_dir}", flush=True)
     _save_is_gcs = save_dir.startswith("gs://")
     if not _save_is_gcs:
         Path(save_dir).mkdir(parents=True, exist_ok=True)

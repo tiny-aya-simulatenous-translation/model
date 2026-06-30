@@ -1,0 +1,98 @@
+# TPU v6e-32 — fallback from un-gettable v6e-64 spot (2026-06-30).
+#
+# v6e-64 spot was deterministically un-provisionable (10/10 FAILs, both zones,
+# PROVISIONING -> SUSPENDING -> FAILED capacity-reclaim). A v6e-32 slice (4 hosts,
+# 32 chips) needs HALF the chips, so it may schedule on spot where the full pod
+# could not, while still being ~4x a single v6e-8.
+#
+# Global batch = batch_size(per-chip) x grad_accum x 32 chips = 4 x 2 x 32 = 256
+#   -> identical optimization regime to the v6e-64 b256 arm and to the
+#   regularization-sweep WINNER (lr_lora 2.8e-4 was tuned at global 256). Per-chip
+#   batch stays 4 (validated safe; v6e NaN'd at 16/chip), grad_accum=2 carries the
+#   x2 vs the v6e-64 b256 config (which used 64 chips x accum 1).
+# Same WINNER hyperparams (lora_r=8/alpha=16, dropout=0.15, weight_decay=0.10),
+# AUDIO-ONLY, same 200k GCS subset. This run ALSO validates the 32-chip multi-host
+# SPMD path (mesh global=32, multi-host data sharding, no NaN).
+# Data budget: 2500 steps x 256 = 640k samples (~3.4 epochs of the 190k subset).
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 32
+  pin_memory: false
+
+train:
+  weight_decay: 0.10              # sweep winner
+  num_codebooks: 8
+  batch_size: 4                   # per-chip (validated safe); 4 x 2 x 32 = global 256
+  grad_accum: 2
+  max_steps: 2500                 # 2500 x 256 = 640k samples
+  warmup_steps: 300
+  min_lr_ratio: 0.0
+  early_stop_patience: 0          # OFF -- run full budget
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  log_grad_norm: true
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: false
+
+loss:
+  # AUDIO-ONLY (corpus has no text alignments).
+  text_weight: 0.0
+  audio_weight: 1.0
+  text_weight_curriculum_frac: 0.0
+  composite_text_w: 0.0
+  composite_audio_w: 1.0
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
+  label_smoothing: 0.1
+  per_codebook_multipliers: [1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.0, 2.0]
+  progressive_unmask_fraction: 0.10
+  unmask_k0: 1
+
+lora:
+  r: 8                            # sweep winner
+  alpha: 16                       # 2 x r
+  dropout: 0.15                   # sweep winner
+  target_modules: [q_proj, v_proj, embed_tokens]
+  lora_exclude_top: 2
+  num_full_ft_layers: 0
+  depth_unfreeze_blocks: 0
+
+optim:
+  lr_lora: 2.8e-4                 # sweep winner (tuned at global batch 256)
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 1.0e-4
+  lr_depth_blocks: 1.0e-5
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 25
+  save_every: 500                 # CHECKPOINT (multi-host spot can preempt) -> resumable
+  audio_every: 1000000
+  val_every: 250
+  val_max_batches: 25
+  val_on_tpu: true
+  diag_metrics: false
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e32-b256
+  keep_last_n: 0                  # keep ALL checkpoints (public release)
+  keep_local_checkpoints: false
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e32-batch-256
+
+perf:
+  enabled: true
+  warmup_skip_steps: 25
+  xprof_trace_labels: false
