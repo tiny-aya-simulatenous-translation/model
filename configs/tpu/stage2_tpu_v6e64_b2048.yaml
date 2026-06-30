@@ -1,0 +1,95 @@
+# TPU v6e-64 BATCH SWEEP — global batch 2048 arm (the "use the whole pod" arm).
+#
+# Pair config: stage2_tpu_v6e64_b256.yaml. Same regularization-sweep WINNER
+# (lora_r=8/alpha=16, dropout=0.15, weight_decay=0.10), AUDIO-ONLY, same 200k
+# subset. The ONLY differences are batch + LR + horizon, set so the comparison is
+# fair:
+#   * Global batch = 8(per-chip) x 4(accum) x 64 = 2048. Per-chip stays 8 (v6e-8
+#     NaN'd at 16/chip), so grad_accum carries the size -- NOT batch_size=32.
+#   * LR = sqrt(8) x 2.8e-4 ~= 7.9e-4 (square-root scaling rule for 8x batch).
+#   * EQUAL DATA BUDGET: 313 steps x 2048 ~= 640k samples == b256's 2500 x 256.
+# Decision rule: if this arm's final val/audio matches (or beats) b256 at equal
+# budget, use 2048 for the full run (8x fewer steps -> much faster wall-clock);
+# if it regresses, the LoRA large-batch penalty is real for us -> use 256.
+# (Optional 3rd arm: 2048 with LINEAR LR 2.24e-3 if sqrt underperforms.)
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 32
+  pin_memory: false
+
+train:
+  weight_decay: 0.10
+  num_codebooks: 8
+  batch_size: 8                   # per-chip (safe); 8 x 4 x 64 = global 2048
+  grad_accum: 4
+  max_steps: 313                  # 313 x 2048 ~= 640k samples (equal-budget vs b256)
+  warmup_steps: 40                # ~equal sample-warmup to b256's 300 x 256
+  min_lr_ratio: 0.0
+  early_stop_patience: 0
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  log_grad_norm: true
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: false
+
+loss:
+  text_weight: 0.0
+  audio_weight: 1.0
+  text_weight_curriculum_frac: 0.0
+  composite_text_w: 0.0
+  composite_audio_w: 1.0
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
+  label_smoothing: 0.1
+  per_codebook_multipliers: [1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.0, 2.0]
+  progressive_unmask_fraction: 0.10
+  unmask_k0: 1
+
+lora:
+  r: 8
+  alpha: 16
+  dropout: 0.15
+  target_modules: [q_proj, v_proj, embed_tokens]
+  lora_exclude_top: 2
+  num_full_ft_layers: 0
+  depth_unfreeze_blocks: 0
+
+optim:
+  lr_lora: 7.9e-4                 # sqrt(8) x 2.8e-4 (square-root batch scaling)
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 1.0e-4
+  lr_depth_blocks: 1.0e-5
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  save_every: 0
+  audio_every: 1000000
+  val_every: 50                   # finer cadence over the short 313-step horizon
+  val_max_batches: 25
+  val_on_tpu: true
+  diag_metrics: false
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e64-b2048
+  keep_last_n: 0
+  keep_local_checkpoints: false
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e64-batch-2048
+
+perf:
+  enabled: true
+  warmup_skip_steps: 10
+  xprof_trace_labels: false
