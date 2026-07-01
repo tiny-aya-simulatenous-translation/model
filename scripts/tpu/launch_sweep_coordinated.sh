@@ -88,7 +88,7 @@ ssh_all "set -e; gcloud storage cp '$GCS_TARBALL' /tmp/sweep-code.tar.gz && \
 # exact desync that let a relaunched coordinator time out on already-past hosts.
 echo "==> [3/4] starting host loops (tmux 'sweephost') on all hosts"
 ssh_all "sudo -H tmux kill-session -t sweephost 2>/dev/null || true; \
-    sudo pkill -9 -f 'scripts/train_hierarchical.py' 2>/dev/null || true; \
+    sudo pkill -9 -f '[s]cripts/train_hierarchical.py' 2>/dev/null || true; \
     sleep 2; \
     sudo -H tmux new-session -d -s sweephost \
     \"CONTROL_PREFIX='$CONTROL_PREFIX' CONFIG_FILE='$CONFIG_FILE' \

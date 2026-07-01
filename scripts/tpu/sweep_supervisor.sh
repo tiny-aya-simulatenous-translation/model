@@ -75,7 +75,7 @@ sweep_done() { gsutil cat "$CONTROL_PREFIX/current_trial.json" 2>/dev/null | gre
 training_alive() {
     for _ in 1 2 3; do
         if gcloud compute tpus tpu-vm ssh "$NODE_ID" --zone="$ZONE" --project="$PROJECT_ID" --worker=all \
-             --command='sudo pgrep -f "scripts/train_hierarchical.py" >/dev/null 2>&1 && echo YES || echo NO' 2>/dev/null | grep -q YES; then
+             --command='sudo pgrep -f "[s]cripts/train_hierarchical.py" >/dev/null 2>&1 && echo YES || echo NO' 2>/dev/null | grep -q YES; then
             return 0
         fi
         sleep 10
@@ -104,7 +104,7 @@ launch_sweep() {
     ntfy "relaunching coordinated sweep on $NODE_ID"
     # kill any stray single-run smoke, then start host loops + coordinator.
     gcloud compute tpus tpu-vm ssh "$NODE_ID" --zone="$ZONE" --project="$PROJECT_ID" --worker=all \
-        --command='sudo tmux kill-session -t train 2>/dev/null; sudo pkill -9 -f "train_hierarchical.py" 2>/dev/null; true' 2>/dev/null || true
+        --command='sudo tmux kill-session -t train 2>/dev/null; sudo pkill -9 -f "[t]rain_hierarchical.py" 2>/dev/null; true' 2>/dev/null || true
     NODE_ID="$NODE_ID" ZONE="$ZONE" NAME="$NAME" STAGE=grid \
         bash "$REPO_DIR/scripts/tpu/launch_sweep_coordinated.sh" 2>&1 | tail -5 || true
 }
