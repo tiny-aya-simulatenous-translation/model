@@ -30,8 +30,33 @@ HEARTBEAT_EVERY="${HEARTBEAT_EVERY:-10}"      # heartbeat every N loops (~30 min
 CONTROL_PREFIX="gs://$BUCKET/sweep-control/$NAME"
 
 ntfy() { curl -s -H "Title: TinyAya sweep" -d "$1" "https://ntfy.sh/$NTFY_TOPIC" >/dev/null 2>&1 || true; }
-qr_state() { gcloud compute tpus queued-resources describe "$QR_NAME" --project="$PROJECT_ID" --zone="$ZONE" --format='value(state.state)' 2>/dev/null || echo "MISSING"; }
-coord_alive() { gcloud compute tpus tpu-vm ssh "$NODE_ID" --zone="$ZONE" --project="$PROJECT_ID" --worker=0 --command='sudo tmux has-session -t sweepcoord 2>/dev/null && echo YES || echo NO' 2>/dev/null | grep -q YES; }
+
+# Resilient QR state: retry, and only report a DEFINITIVE state. Transient
+# describe failures return UNKNOWN (treated as "keep waiting", never destructive)
+# so a network blip can't trigger a re-provision of a healthy running TPU.
+qr_state() {
+    local s
+    for _ in 1 2 3; do
+        s=$(gcloud compute tpus queued-resources describe "$QR_NAME" --project="$PROJECT_ID" --zone="$ZONE" --format='value(state.state)' 2>/dev/null)
+        if [ -n "$s" ]; then echo "$s"; return; fi
+        sleep 10
+    done
+    echo "UNKNOWN"
+}
+
+# Resilient coordinator liveness: YES if any of 3 tries sees the session; only
+# "not alive" if all 3 SSHes succeeded-and-saw-no-session or failed. Returns 0
+# (alive) on YES, 1 otherwise.
+coord_alive() {
+    for _ in 1 2 3; do
+        if gcloud compute tpus tpu-vm ssh "$NODE_ID" --zone="$ZONE" --project="$PROJECT_ID" --worker=0 \
+             --command='sudo tmux has-session -t sweepcoord 2>/dev/null && echo YES || echo NO' 2>/dev/null | grep -q YES; then
+            return 0
+        fi
+        sleep 10
+    done
+    return 1
+}
 sweep_done() { gsutil cat "$CONTROL_PREFIX/current_trial.json" 2>/dev/null | grep -q '"stop": true'; }
 
 launch_sweep() {
@@ -56,29 +81,37 @@ reprovision() {
 }
 
 ntfy "supervisor started for $NAME on $NODE_ID -- $WANDB_URL"
-i=0
+i=0; down=0; failed=0
 while true; do
     i=$((i + 1))
-    st=$(qr_state)
     if sweep_done; then
         ntfy "Stage-1 sweep COMPLETE. Decide the winning structure, then launch Stage 2. $WANDB_URL"
         sleep 3600; continue
     fi
+    st=$(qr_state)
     case "$st" in
         ACTIVE|READY)
+            failed=0
             if coord_alive; then
+                down=0
                 [ $((i % HEARTBEAT_EVERY)) -eq 0 ] && ntfy "alive: sweep running on $NODE_ID. $WANDB_URL"
             else
-                ntfy "coordinator down (QR $st) -- relaunching"; launch_sweep
+                down=$((down + 1))   # require 2 consecutive misses (each already retried 3x)
+                if [ "$down" -ge 2 ]; then
+                    ntfy "coordinator down x$down -- relaunching"; launch_sweep; down=0
+                fi
             fi
             ;;
-        FAILED|SUSPENDING|MISSING)
-            reprovision "$st"
-            # wait up to ~15 min for ACTIVE, then launch
-            for _ in $(seq 1 30); do sleep 30; [ "$(qr_state)" = "ACTIVE" ] && break; done
-            [ "$(qr_state)" = "ACTIVE" ] && { sleep 60; launch_sweep; }
+        FAILED)
+            failed=$((failed + 1))   # confirmed spot reclaim only after 2 consecutive
+            if [ "$failed" -ge 2 ]; then
+                reprovision "$st"
+                for _ in $(seq 1 30); do sleep 30; [ "$(qr_state)" = "ACTIVE" ] && break; done
+                [ "$(qr_state)" = "ACTIVE" ] && { sleep 60; launch_sweep; }
+                failed=0
+            fi
             ;;
-        *) : ;;  # WAITING_FOR_RESOURCES / PROVISIONING -> keep waiting
+        *) down=0; failed=0 ;;  # UNKNOWN/SUSPENDING/WAITING/PROVISIONING -> wait, never destructive
     esac
     sleep "$POLL_S"
 done
