@@ -75,19 +75,38 @@ def _normalize_gcs_dest(save_dir: str) -> str | None:
     return None
 
 
-def _gsutil_cp_into(src_dir: str, gcs_dest: str) -> None:
-    """Copy the *contents* of ``src_dir`` into ``gcs_dest`` via gsutil."""
+def _gsutil_cp_into(src_dir: str, gcs_dest: str, attempts: int = 4) -> None:
+    """Copy the *contents* of ``src_dir`` into ``gcs_dest`` via gsutil.
+
+    Retries with backoff: the checkpoint bundle includes the (large, frozen)
+    depth-decoder tensor, and a single transient network blip on that multi-GB
+    ``gsutil -m cp`` used to raise immediately and crash the whole training
+    process -- losing hundreds of steps and, worse, leaving ``best_by_val``
+    stuck on a STALE (pre-crash) metric that a sweep coordinator would then
+    rank on. gsutil's own "Resuming upload" retries a broken TCP stream but
+    still surfaces the operation as failed if the retry budget runs out; wrap
+    the whole multi-file copy again one level up.
+    """
     import subprocess
+    import time
 
     print(f"[ckpt] uploading {src_dir}/* -> {gcs_dest}", flush=True)
-    result = subprocess.run(
-        ["gsutil", "-m", "cp", "-r", src_dir.rstrip("/") + "/.", gcs_dest],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"gsutil upload failed (rc={result.returncode}): {result.stderr}")
-    print(f"[ckpt] upload complete: {gcs_dest}", flush=True)
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            ["gsutil", "-m", "cp", "-r", src_dir.rstrip("/") + "/.", gcs_dest],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print(f"[ckpt] upload complete: {gcs_dest}", flush=True)
+            return
+        last_err = result.stderr
+        print(f"[ckpt] upload attempt {attempt}/{attempts} failed (rc={result.returncode}); "
+              f"stderr tail: {(result.stderr or '')[-500:]}", flush=True)
+        if attempt < attempts:
+            time.sleep(min(10 * 2 ** (attempt - 1), 120))
+    raise RuntimeError(f"gsutil upload failed after {attempts} attempts: {last_err}")
 
 
 def save_checkpoint(
@@ -390,26 +409,9 @@ def save_checkpoint_canonical_final(
         json.dump({"step": "final", "save_kind": "canonical_final"}, f, indent=2)
 
     if is_gcs:
-        import subprocess
-
-        print(
-            f"[patch 19] uploading {write_dir}/* to {gcs_dest}",
-            flush=True,
-        )
-        result = subprocess.run(
-            ["gsutil", "-m", "cp", "-r", write_dir + "/.", gcs_dest],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"[patch 19] gsutil stderr: {result.stderr}", flush=True)
-            raise RuntimeError(f"gsutil upload failed (rc={result.returncode}): {result.stderr}")
-        print(
-            f"[patch 19] gsutil upload complete: {gcs_dest}",
-            flush=True,
-        )
         import shutil
 
+        _gsutil_cp_into(write_dir, gcs_dest)
         shutil.rmtree(write_dir, ignore_errors=True)
 
 
