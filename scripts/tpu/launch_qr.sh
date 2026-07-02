@@ -42,6 +42,10 @@ INTERNAL_IPS="${INTERNAL_IPS:-}"
 # Optional GCS path to a full-repo tarball, used by startup_script when the
 # repo is private and the VM has no GitHub credentials.
 REPO_TARBALL_GS_URI="${REPO_TARBALL_GS_URI:-}"
+# Phase E sweep fleet: when set, the slice runs `wandb agent SWEEP_ID` instead of
+# a single training run, and pulls the pre-staged subset from SWEEP_DATA_GS_URI.
+SWEEP_ID="${SWEEP_ID:-}"
+SWEEP_DATA_GS_URI="${SWEEP_DATA_GS_URI:-}"
 # Sharding strategy: replicated | fsdpv2 | fsdpv2_lora | auto. See
 # src/backend/tpu_backend.py for semantics.
 TPU_STRATEGY="${TPU_STRATEGY:-auto}"
@@ -75,6 +79,12 @@ fi
 metadata_pairs="config-file=$CONFIG_FILE,tpu-strategy=$TPU_STRATEGY,probe-first=$PROBE_FIRST,is-spot=$is_spot"
 if [ -n "$REPO_TARBALL_GS_URI" ]; then
     metadata_pairs+=",repo-tarball-gs-uri=$REPO_TARBALL_GS_URI"
+fi
+if [ -n "$SWEEP_ID" ]; then
+    metadata_pairs+=",sweep-id=$SWEEP_ID"
+fi
+if [ -n "$SWEEP_DATA_GS_URI" ]; then
+    metadata_pairs+=",sweep-data-gs-uri=$SWEEP_DATA_GS_URI"
 fi
 
 echo "==> creating Queued Resource"

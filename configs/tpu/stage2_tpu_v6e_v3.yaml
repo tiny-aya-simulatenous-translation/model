@@ -1,0 +1,158 @@
+# TPU v6e-8 SPOT config: tr-hi-parallel-speech v0.3 training.
+#
+# WHY THIS EXISTS
+# ---------------
+# v0.3 recipe (docs/v0.3-implementation-plan.md). v0.2 OVERFIT: val/loss bottomed
+# at step 1000 then rose while train fell -- a sharp-minimum overshoot from too
+# much capacity (LoRA r=64) + too high an LR (lr_lora 4.6e-4). This config
+# implements **Phase A (regularization)**:
+#   - r 64 -> 16 (alpha 128 -> 32)            # less capacity to memorize
+#   - lr_lora 4.6e-4 -> 1e-4, cosine to ZERO  # min_lr_ratio 0.1 -> 0
+#   - weight_decay 0.01 -> 0.05               # stronger L2
+#   - lora_dropout 0 -> 0.08                  # adapter regularization
+#   - label_smoothing 0 -> 0.1                # (train only; val stays clean CE)
+#   - early stopping: patience 8 x val_every 250 = 2000-step grace, min_delta 1e-3
+#     (best_by_val is saved regardless -> stopping never degrades the release)
+#
+# DEFERRED to later phases (values still the v2 baseline here):
+#   - Phase C (deep codebooks): per-codebook unmask/multipliers, depth unfreeze
+#   - Phase D (multitask): text_weight curriculum + composite val metric
+#   - Phase E: SpecAugment + regularization sweep
+#
+# Usage (single-host v6e-8 spot, europe-west4-a):
+#   TPU_STRATEGY=fsdpv2_lora uv run python scripts/train_hierarchical.py \
+#       --config configs/tpu/stage2_tpu_v6e_v3.yaml --resume auto
+
+backend: tpu
+
+data:
+  encoded_dir: /mnt/data/encoded
+  train_split: /mnt/data/splits/train.jsonl
+  val_split: /mnt/data/splits/val.jsonl
+  max_frames: 300
+  audio_frame_rate: 12.5
+  num_workers: 32
+  pin_memory: false
+
+train:
+  # Phase A: stronger L2 (0.01 -> 0.05).
+  weight_decay: 0.05
+  num_codebooks: 8
+  # b=8/g=4 is the ONLY stable topology on v6e-8 bf16 (b=16/g=2 NaN'd @130).
+  batch_size: 8
+  grad_accum: 4
+  # Cosine horizon stays 15000 (~3 epochs); early stopping halts the run when
+  # val plateaus -- do NOT shorten the horizon (that double-decays the LR).
+  max_steps: 15000
+  # Phase A: ~8% warmup (was 500/3.3%).
+  warmup_steps: 1200
+  # Phase A: cosine decays to ZERO (was 0.1) -- the LR-annealing half of the
+  # weight-averaging story; pairs with the flatter-minimum regularization.
+  min_lr_ratio: 0.0
+  # Phase A early stopping (best_by_val unaffected; only halts the run).
+  early_stop_patience: 8        # 8 val cycles x val_every 250 = 2000-step grace
+  early_stop_min_delta: 0.001   # metric threshold (val-loss units), not time
+  compile_warmup_steps: 1
+  enable_clip_grad_norm: false
+  log_grad_norm: true
+  fsdp_barrier_hook: false
+  depth_chunk_size: 16
+  precision: bfloat16
+  use_scan_layers: false
+  xla_grad_checkpoint: true
+  final_canonical_save: true
+
+loss:
+  # AUDIO-ONLY: the synthetic tr-hi-mimi-encoded corpus ships NO text alignments
+  # (verified: 0 _src/_tgt.json in the batch tarballs), so the text/inner-monologue
+  # stream can't be supervised (text loss is structurally 0 -- same as v0.1). We
+  # therefore train audio-only: text_weight=0, composite = val_audio. The Phase-D
+  # curriculum is disabled (inert without text). Re-enable all of this only if
+  # alignments are ever generated for this corpus.
+  text_weight: 0.0
+  audio_weight: 1.0
+  text_weight_start: 0.5
+  text_weight_end: 0.3
+  text_weight_curriculum_frac: 0.0   # disabled (no text supervision on this data)
+  text_weight_quantum: 0.05
+  composite_text_w: 0.0
+  composite_audio_w: 1.0              # composite = val_audio
+  text_padding_weight: 0.01
+  zero_padding_weight: 0.0
+  # Phase A: label smoothing (applied to the TRAIN loss only; the val call
+  # leaves it at 0 so val/loss stays a clean generalization metric).
+  label_smoothing: 0.1
+  # Phase C: deep-codebook learning. Per-codebook loss multipliers (GENTLE deep
+  # boost -- NOT the aggressive [1..128]; that can starve cb0) + progressive
+  # coarse->fine unmasking: supervise the first unmask_k0 codebooks, then ramp to
+  # all 8 over the first progressive_unmask_fraction of training. cb0 stabilizes
+  # the semantic stream before the fine residual codebooks join.
+  # XLA note: the weight vector is cached by value, so the ramp recompiles only a
+  # few times (one-time); validate on the smoke. Omit these keys to disable
+  # (uniform per-codebook mean = the v2 behaviour).
+  per_codebook_multipliers: [1.0, 1.0, 1.5, 1.5, 2.0, 2.0, 2.0, 2.0]
+  progressive_unmask_fraction: 0.10
+  unmask_k0: 1
+
+lora:
+  # Phase A: r 64 -> 16, alpha 128 -> 32 (alpha = 2r). Lower capacity is the
+  # single biggest anti-overfit lever (Raschka/Unsloth/PEFT-survey).
+  r: 16
+  alpha: 32
+  # Phase A: adapter dropout (0 -> 0.08).
+  dropout: 0.08
+  target_modules: [q_proj, v_proj, embed_tokens]
+  lora_exclude_top: 2
+  num_full_ft_layers: 0
+  # Phase C3 (OPT-IN, default off): unfreeze the last N depth-decoder transformer
+  # blocks for low-LR adaptation to TR/HI acoustics. The Phase C2 unmask gates their
+  # gradients, so they only learn once the deep codebooks unmask. Start with frozen
+  # (rely on C1/C2 + Phase A first); set to e.g. 2 to enable.
+  depth_unfreeze_blocks: 0
+
+optim:
+  # Phase A: lr_lora 4.6e-4 -> 1e-4 (the overshoot fix).
+  lr_lora: 1.0e-4
+  lr_full_ft: 5.0e-5
+  lr_projection: 5.0e-4
+  lr_depth: 1.0e-4
+  # Phase C3: LR for unfrozen depth blocks (only used if depth_unfreeze_blocks>0).
+  # Low (x0.1 of lr_depth) so adapting the blocks doesn't destabilize the decoder.
+  lr_depth_blocks: 1.0e-5
+  lr_audio_embed: 5.0e-4
+  lr_text_embed: 5.0e-4
+
+logging:
+  log_every: 10
+  save_every: 1000
+  audio_every: 2000
+  # Phase A: validate 4x more often (1000 -> 250) so early stopping + best_by_val
+  # have fine-grained signal; patience 8 x 250 = a 2000-step grace window.
+  val_every: 250
+  val_max_batches: 50
+  val_on_tpu: true
+  diag_metrics: true
+  # Fresh save_dir + run name for v0.3 (avoid --resume auto picking up v0.2).
+  save_dir: gs://tinyaya-stage2-tpu/checkpoints/stage2-tpu-v6e-v3
+  keep_last_n: 0
+  keep_local_checkpoints: true
+  local_checkpoint_dir: /mnt/data/checkpoints
+  use_wandb: true
+  wandb_project: tinyaya-stage2-tpu
+  wandb_run_name: v6e-v3-phaseA
+
+perf:
+  enabled: true
+  warmup_skip_steps: 50
+  xprof_trace_labels: false
+
+# Phase E: SpecAugment-on-codes (flag-gated; DEFAULT OFF for the first v0.3 run,
+# enable as an ablation / sweep axis). Masks random time spans + drops whole
+# codebooks of the INPUT (user) audio stream only -- never the targets, never
+# val. Train-loader only.
+spec_augment:
+  enabled: false
+  prob: 0.5                # per-sample probability of applying any masking
+  time_mask_count: 2       # number of time spans to blank -> SILENCE
+  time_mask_max: 20        # max span length in frames (12.5 Hz -> ~1.6 s)
+  codebook_drop_count: 1   # number of whole codebooks to blank (never all)

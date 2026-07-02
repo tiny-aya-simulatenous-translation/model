@@ -1,0 +1,57 @@
+# W&B sweep — TinyAya Stage 2 v0.3-SCALE — STAGE 2: Bayesian lr x rank.
+#
+# Run AFTER Stage 1 (sweeps/sweep_stage2_scale_grid.yaml) picks the best STRUCTURE.
+# Structure (target_modules / use_rslora / lora_exclude_top) is FIXED to the Stage-1
+# winner; Bayes then optimizes the continuous + low-card axes that matter most when
+# overfitting isn't the constraint: learning rate (THE #1 hyperparameter) and rank.
+# ~6-7 sequential trials. rsLoRA ON so high ranks (32/64) don't gradient-collapse
+# (vanilla alpha/r suppresses high-rank adapters; alpha/sqrt(r) fixes it).
+#
+# ⚠️ BEFORE RUNNING: set `target_modules` (+ exclude_top) below to the Stage-1 winner.
+# ⚠️ MULTI-HOST EXECUTION CAVEAT: see sweep_stage2_scale_grid.yaml -- drive via a
+#    single coordinator that broadcasts each trial's args to all 4 hosts.
+#
+# Hyperband caveat (research): aggressive culling kills slow-but-better high-rank /
+# low-lr configs. min_iter=750 (3 val cycles) is conservative; RE-RUN any
+# pruned-but-promising config to full horizon before discarding.
+#
+# HOW TO RUN:
+#   wandb sweep sweeps/sweep_stage2_scale_bayes.yaml     # -> SWEEP_ID
+#   # launch the coordinator on the slice (detached tmux) -- see runbook.
+# Promote winner:
+#   python scripts/promote_sweep_winner.py --sweep <entity/project/id> \
+#       --config configs/tpu/stage2_tpu_v6e16_b256.yaml --metric val/composite
+
+entity: cataluna84
+project: tinyaya-stage2-tpu
+program: scripts/train_hierarchical.py
+method: bayes
+metric:
+  name: val/composite
+  goal: minimize
+
+# Hyperband: min_iter in global_step units (val_every=250 -> 750 = 3 val cycles).
+early_terminate:
+  type: hyperband
+  min_iter: 750
+  eta: 3
+
+parameters:
+  # ---- swept: lr (log) x rank (categorical) ----
+  lr_lora:  { distribution: log_uniform_values, min: 1.0e-5, max: 5.0e-4 }
+  lora_r:   { values: [8, 16, 32, 64] }
+  # ---- fixed: alpha = 2*r; rsLoRA on ----
+  lora_alpha_mult: { value: 2 }
+  use_rslora:      { value: true }
+  # ---- FIXED to the Stage-1 winner -- EDIT after Stage 1 (default: +full attention) ----
+  target_modules:   { value: [q_proj, k_proj, v_proj, o_proj, embed_tokens] }
+  lora_exclude_top: { value: 2 }
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --config
+  - configs/tpu/stage2_tpu_v6e16_scale_proxy.yaml
+  - --sweep
+  - ${args}

@@ -27,14 +27,19 @@ class LoRAEmbedding(nn.Module):
     """Drop-in replacement for nn.Embedding that freezes the base table and
     learns a low-rank adapter on top (LoRA-style)."""
 
-    def __init__(self, base_embed: nn.Embedding, r: int = 16, alpha: int = 32):
+    def __init__(self, base_embed: nn.Embedding, r: int = 16, alpha: int = 32,
+                 use_rslora: bool = False):
         super().__init__()
         self.base_embed = base_embed
         self.base_embed.weight.requires_grad = False
         num_embeddings, embedding_dim = base_embed.weight.shape
         self.lora_A = nn.Embedding(num_embeddings, r)
         self.lora_B = nn.Linear(r, embedding_dim, bias=False)
-        self.scaling = alpha / r
+        # rsLoRA: alpha/sqrt(r) keeps the adapter contribution scale ~constant as
+        # r grows (vanilla alpha/r collapses high-rank gradients). Mirror the PEFT
+        # LoraConfig(use_rslora=...) convention here so the text_embed adapter
+        # scales the same way as the attention/MLP adapters.
+        self.scaling = alpha / (r ** 0.5) if use_rslora else alpha / r
         nn.init.normal_(self.lora_A.weight, std=1.0 / r)
         nn.init.zeros_(self.lora_B.weight)
 
@@ -53,6 +58,8 @@ def apply_lora(
     target_modules=None,
     num_full_ft_layers=0,
     lora_exclude_top=2,
+    lora_dropout=0.0,
+    use_rslora=False,
 ):
     """Apply LoRA to the TinyAya backbone (config-driven; sweepable).
 
@@ -89,10 +96,12 @@ def apply_lora(
     lora_config = LoraConfig(
         r=r,
         lora_alpha=lora_alpha,
+        lora_dropout=lora_dropout,
         target_modules=target_modules,
         layers_to_transform=lora_layers,
         bias="none",
         task_type=TaskType.CAUSAL_LM,
+        use_rslora=use_rslora,
     )
 
     backbone.model = get_peft_model(backbone.model, lora_config)
@@ -116,14 +125,19 @@ def apply_lora(
         )
 
     # Wrap text_embed with LoRA adapter (frozen base + trainable low-rank)
-    backbone.text_embed = LoRAEmbedding(backbone.text_embed, r=r, alpha=lora_alpha)
+    backbone.text_embed = LoRAEmbedding(
+        backbone.text_embed, r=r, alpha=lora_alpha, use_rslora=use_rslora
+    )
 
     # Ensure audio_heads are trainable
     for param in backbone.audio_heads.parameters():
         param.requires_grad = True
 
+    _scale_rule = f"alpha/sqrt(r)={lora_alpha / (r ** 0.5):.3f}" if use_rslora \
+        else f"alpha/r={lora_alpha / r:.3f}"
     print(
-        f"[lora] r={r} alpha={lora_alpha} targets={target_modules} "
+        f"[lora] r={r} alpha={lora_alpha} rslora={use_rslora} ({_scale_rule}) "
+        f"targets={target_modules} "
         f"lora_layers=0..{num_layers - excluded - 1} (exclude_top={excluded}) "
         f"num_full_ft_layers={num_full_ft_layers} (+{unfrozen / 1e6:.1f}M full-FT)"
     )

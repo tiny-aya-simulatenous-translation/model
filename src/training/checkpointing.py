@@ -75,19 +75,38 @@ def _normalize_gcs_dest(save_dir: str) -> str | None:
     return None
 
 
-def _gsutil_cp_into(src_dir: str, gcs_dest: str) -> None:
-    """Copy the *contents* of ``src_dir`` into ``gcs_dest`` via gsutil."""
+def _gsutil_cp_into(src_dir: str, gcs_dest: str, attempts: int = 4) -> None:
+    """Copy the *contents* of ``src_dir`` into ``gcs_dest`` via gsutil.
+
+    Retries with backoff: the checkpoint bundle includes the (large, frozen)
+    depth-decoder tensor, and a single transient network blip on that multi-GB
+    ``gsutil -m cp`` used to raise immediately and crash the whole training
+    process -- losing hundreds of steps and, worse, leaving ``best_by_val``
+    stuck on a STALE (pre-crash) metric that a sweep coordinator would then
+    rank on. gsutil's own "Resuming upload" retries a broken TCP stream but
+    still surfaces the operation as failed if the retry budget runs out; wrap
+    the whole multi-file copy again one level up.
+    """
     import subprocess
+    import time
 
     print(f"[ckpt] uploading {src_dir}/* -> {gcs_dest}", flush=True)
-    result = subprocess.run(
-        ["gsutil", "-m", "cp", "-r", src_dir.rstrip("/") + "/.", gcs_dest],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"gsutil upload failed (rc={result.returncode}): {result.stderr}")
-    print(f"[ckpt] upload complete: {gcs_dest}", flush=True)
+    last_err = None
+    for attempt in range(1, attempts + 1):
+        result = subprocess.run(
+            ["gsutil", "-m", "cp", "-r", src_dir.rstrip("/") + "/.", gcs_dest],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            print(f"[ckpt] upload complete: {gcs_dest}", flush=True)
+            return
+        last_err = result.stderr
+        print(f"[ckpt] upload attempt {attempt}/{attempts} failed (rc={result.returncode}); "
+              f"stderr tail: {(result.stderr or '')[-500:]}", flush=True)
+        if attempt < attempts:
+            time.sleep(min(10 * 2 ** (attempt - 1), 120))
+    raise RuntimeError(f"gsutil upload failed after {attempts} attempts: {last_err}")
 
 
 def save_checkpoint(
@@ -390,36 +409,27 @@ def save_checkpoint_canonical_final(
         json.dump({"step": "final", "save_kind": "canonical_final"}, f, indent=2)
 
     if is_gcs:
-        import subprocess
-
-        print(
-            f"[patch 19] uploading {write_dir}/* to {gcs_dest}",
-            flush=True,
-        )
-        result = subprocess.run(
-            ["gsutil", "-m", "cp", "-r", write_dir + "/.", gcs_dest],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            print(f"[patch 19] gsutil stderr: {result.stderr}", flush=True)
-            raise RuntimeError(f"gsutil upload failed (rc={result.returncode}): {result.stderr}")
-        print(
-            f"[patch 19] gsutil upload complete: {gcs_dest}",
-            flush=True,
-        )
         import shutil
 
+        _gsutil_cp_into(write_dir, gcs_dest)
         shutil.rmtree(write_dir, ignore_errors=True)
 
 
 def load_checkpoint(model, optimizer, scheduler, load_dir: str) -> int:
     """Load checkpoint into an UNWRAPPED model (before FSDP/DDP wrapping).
 
-    For FSDP resume: call this BEFORE backend.wrap_model(). The model
-    gets correct weights, then FSDP shards them during wrapping.
-    Optimizer/scheduler state is NOT restored (incompatible after
-    re-sharding) — Adam momentum restarts from zero.
+    For FSDP resume: call this BEFORE backend.wrap_model() with optimizer=None
+    and scheduler=None -- the model gets correct weights, then FSDP shards them
+    during wrapping. The optimizer/scheduler do not exist yet at that point, so
+    the caller restores THEM separately AFTER wrap + optimizer creation (see the
+    resume block in train_hierarchical.py: full optimizer state is gathered at
+    save time, then re-loaded -- FSDP.optim_state_dict_to_load on GPU, or a direct
+    load on the SPMD/TPU path where the optimizer sees global logical tensors).
+
+    If optimizer/scheduler ARE passed here (non-FSDP single-device resume), their
+    state is restored inline below. Adam moments therefore survive a resume on all
+    paths; only the dataloader cursor is at-least-once (re-seen from the epoch
+    boundary), which is acceptable for a fixed-budget LoRA run.
     """
     from peft.utils.save_and_load import load_peft_weights, set_peft_model_state_dict
 
@@ -569,40 +579,86 @@ def is_gcs_path(path: str) -> bool:
     return path.startswith("gs://")
 
 
+def _step_of(path: str) -> int:
+    """Parse the step number out of a ``.../step_NNNNNN`` dir; -1 if unparseable."""
+    name = path.rstrip("/").rsplit("/", 1)[-1]
+    try:
+        return int(name.split("step_", 1)[1])
+    except (IndexError, ValueError):
+        return -1
+
+
 def get_checkpoint_dirs(base_dir: str) -> list[str]:
-    """List checkpoint directories, supporting both local and GCS."""
+    """List the periodic ``step_*`` checkpoint dirs, sorted ascending by step.
+
+    save_checkpoint writes ``<save_dir>/step_NNNNNN`` (zero-padded). This finds
+    exactly those, EXCLUDING non-step dirs like ``best_by_val`` so resume always
+    picks the latest periodic checkpoint. Supports local and GCS (gsutil, matching
+    the rest of this module -- no gcsfs dependency).
+    """
     if is_gcs_path(base_dir):
-        try:
-            import gcsfs
+        import subprocess
 
-            fs = gcsfs.GCSFileSystem()
-            try:
-                entries = fs.ls(base_dir)
-            except FileNotFoundError:
-                return []
-            dirs = [f"gs://{d}" for d in entries if fs.isdir(d)]
-            return sorted(dirs)
-        except ImportError:
-            print("Warning: gcsfs not installed, cannot list GCS checkpoints")
-            return []
-    else:
-        import os
-
-        if not os.path.exists(base_dir):
-            return []
-        return sorted(
-            [
-                os.path.join(base_dir, d)
-                for d in os.listdir(base_dir)
-                if os.path.isdir(os.path.join(base_dir, d)) and d.startswith("checkpoint_")
-            ]
+        listing = subprocess.run(
+            ["gsutil", "ls", base_dir.rstrip("/") + "/"],
+            capture_output=True,
+            text=True,
         )
+        if listing.returncode != 0:
+            return []
+        dirs = [
+            ln.rstrip("/")
+            for ln in listing.stdout.splitlines()
+            if ln.rstrip("/").rsplit("/", 1)[-1].startswith("step_")
+        ]
+        return sorted(dirs, key=_step_of)
+
+    if not os.path.exists(base_dir):
+        return []
+    dirs = [
+        os.path.join(base_dir, d)
+        for d in os.listdir(base_dir)
+        if d.startswith("step_") and os.path.isdir(os.path.join(base_dir, d))
+    ]
+    return sorted(dirs, key=_step_of)
 
 
 def find_latest_checkpoint(base_dir: str) -> str | None:
-    """Find the latest checkpoint directory for resume."""
+    """Return the highest-step ``step_*`` checkpoint dir for resume, or None."""
     dirs = get_checkpoint_dirs(base_dir)
     return dirs[-1] if dirs else None
+
+
+def read_checkpoint_metadata(load_dir: str) -> dict:
+    """Return a checkpoint's parsed ``metadata.json`` (local or GCS), or ``{}``.
+
+    A cheap single-file read (``gsutil cat`` for GCS) used to recover resume
+    context -- e.g. the W&B run id, so a preempted run can continue the SAME run
+    instead of fragmenting the dashboard -- without re-downloading the checkpoint.
+    """
+    gcs_src = _normalize_gcs_dest(load_dir)
+    if gcs_src is not None:
+        import subprocess
+
+        out = subprocess.run(
+            ["gsutil", "cat", gcs_src.rstrip("/") + "/metadata.json"],
+            capture_output=True,
+            text=True,
+        )
+        if out.returncode != 0 or not out.stdout.strip():
+            return {}
+        try:
+            return json.loads(out.stdout)
+        except ValueError:
+            return {}
+    p = os.path.join(load_dir, "metadata.json")
+    if not os.path.exists(p):
+        return {}
+    try:
+        with open(p) as f:
+            return json.load(f)
+    except ValueError:
+        return {}
 
 
 def save_checkpoint_with_backend(

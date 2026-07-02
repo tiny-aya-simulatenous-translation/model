@@ -1,0 +1,56 @@
+# W&B sweep — TinyAya Stage 2 v0.3-SCALE — STAGE 1: structural GRID.
+#
+# Goal (data-rich regime, overfitting NOT the constraint): find WHERE to adapt.
+# OFAT over target_modules (q,v -> +attn k,o -> +MLP) with rsLoRA ON and the
+# baseline depth coverage. rank fixed 16, lr fixed 2e-4 so only structure varies.
+# ~3 trials. Pick the 1-2 best structures by val/composite, then run STAGE 2
+# (sweeps/sweep_stage2_scale_bayes.yaml) over rank x lr on the winning structure.
+#
+# metric val/composite is logged with summary="min" (best, early-stopped point).
+#
+# ⚠️ MULTI-HOST EXECUTION CAVEAT (single v6e-16 = 4 hosts forming ONE 16-chip
+#    SPMD mesh): a plain per-host `wandb agent` DESYNCS -- each host's agent pulls
+#    a DIFFERENT trial, so the 4 hosts would run different hyperparams and the
+#    mesh corrupts. Each trial must run as ONE 16-chip job with IDENTICAL args on
+#    all 4 hosts. Drive the sweep from a single coordinator that broadcasts each
+#    trial's args to all hosts (see scripts/tpu sweep launcher / runbook). The
+#    `command:` below is the per-trial program invocation that the coordinator
+#    fans out; it is NOT meant to be run as 4 independent agents.
+#
+# HOW TO RUN (one-time, from workstation):
+#   wandb sweep sweeps/sweep_stage2_scale_grid.yaml      # -> SWEEP_ID
+#   # then launch the coordinator on the slice (detached tmux) -- see runbook.
+
+entity: cataluna84
+project: tinyaya-stage2-tpu
+program: scripts/train_hierarchical.py
+method: grid
+metric:
+  name: val/composite
+  goal: minimize
+
+parameters:
+  # ---- swept: WHERE to adapt (the only multi-valued axis -> ~3 trials) ----
+  target_modules:
+    values:
+      - [q_proj, v_proj, embed_tokens]                                              # baseline (q,v)
+      - [q_proj, k_proj, v_proj, o_proj, embed_tokens]                              # + full attention
+      - [q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj, down_proj, embed_tokens]  # + MLP
+  # ---- fixed for Stage 1 ----
+  use_rslora:       { value: true }   # alpha/sqrt(r) -- on for the capacity arms
+  lora_exclude_top: { value: 2 }      # baseline depth coverage (exclude_top=0 is memory-risky)
+  lora_r:           { value: 16 }     # mid rank; Stage 2 sweeps rank
+  lora_alpha_mult:  { value: 2 }      # alpha = 2*r
+  lr_lora:          { value: 2.0e-4 } # conservative; Stage 2 sweeps lr
+  # OPTIONAL extra probes (uncomment to add trials, budget permitting):
+  #   lora_exclude_top: { values: [2, 0] }   # +wider depth coverage (watch HBM ~29.5/31GB)
+  #   use_rslora:       { values: [true, false] }
+
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --config
+  - configs/tpu/stage2_tpu_v6e16_scale_proxy.yaml
+  - --sweep
+  - ${args}

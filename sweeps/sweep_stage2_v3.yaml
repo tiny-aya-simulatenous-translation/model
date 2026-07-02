@@ -1,0 +1,64 @@
+# W&B sweep — TinyAya Stage 2 v0.3 REGULARIZATION search (proxy, NOT the full run)
+#
+# Phase E: with the v0.3 levers all ON (Phase A regularization, Phase C
+# deep-codebook unmask, Phase D composite metric + text_weight curriculum), sweep
+# the *regularization* knobs that drove v0.2's overfit:
+#   lora_r, lora_dropout, weight_decay, lr_lora.
+#
+# Differences from the v2 sweep (sweep_stage2.yaml):
+#   - metric is `val/composite` (Phase D: audio-heavier mean of the raw stream
+#     losses), not `val/audio_loss`. The run logs it with summary="min", so each
+#     trial is scored at its BEST (early-stopped) composite, not its last value.
+#   - LONGER proxy (2.5k steps, val every 250) so the regularizer effects (which
+#     only show up past the memorization point) are actually visible.
+#
+# PREREQUISITE: run AFTER the data loader is repointed to the synthetic corpus
+# `tiny-aya-translate/tr-hi-mimi-encoded` (the v0.2/FLEURS blend would search the
+# wrong distribution). See the data-repoint step in docs/v0.3-implementation-plan.md.
+#
+# HOW TO RUN (see sweeps/README.md):
+#   wandb sweep sweeps/sweep_stage2_v3.yaml
+#   wandb agent <entity>/<project>/<sweep_id>    # on the TPU VM, TPU env exported
+# Then promote the winner into the production config:
+#   python scripts/promote_sweep_winner.py --sweep <entity>/<project>/<id> \
+#       --config configs/tpu/stage2_tpu_v6e_v3.yaml --metric val/composite
+
+program: scripts/train_hierarchical.py
+method: bayes
+metric:
+  name: val/composite
+  goal: minimize
+
+# Hyperband: cull bottom-bracket trials early. min_iter is in global_step units;
+# 750 = 3 val cycles (val_every 250) -> a trial must survive to ~step 750 before
+# it can be killed, enough for the regularizers to start separating runs.
+early_terminate:
+  type: hyperband
+  min_iter: 750
+  eta: 3
+
+parameters:
+  # ---- swept: the regularization knobs (Phase A/E) ----
+  lr_lora:       { distribution: log_uniform_values, min: 5.0e-5, max: 3.0e-4 }
+  lora_r:        { values: [8, 16, 32] }
+  lora_dropout:  { values: [0.0, 0.05, 0.1, 0.15] }
+  weight_decay:  { values: [0.01, 0.05, 0.1] }
+  # ---- fixed: alpha = 2*r (matches the v3 base) ----
+  lora_alpha_mult: { value: 2 }
+  # NB: the proxy HORIZON (max_steps / val_every / warmup / save_every) lives in
+  # the proxy config below, NOT in this grid -- so promote_sweep_winner only ever
+  # carries the *recipe* knobs into the production config.
+
+# wandb agent appends each swept param as a CLI arg (--lr_lora <v> --lora_r <v>
+# --lora_dropout <v> ...); train_hierarchical.py maps them onto the cfg sections
+# (lora_r/alpha_mult/dropout -> lora.*, the rest by section-key name). Export the
+# TPU env (LD_LIBRARY_PATH, PJRT_DEVICE=TPU, XLA_NO_SPECIAL_SCALARS=1) before the
+# agent; ${env} inherits it.
+command:
+  - ${env}
+  - python
+  - ${program}
+  - --config
+  - configs/tpu/stage2_tpu_v6e_v3_proxy.yaml
+  - --sweep
+  - ${args}

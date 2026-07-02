@@ -183,6 +183,10 @@ from src.training.checkpointing import (
     save_checkpoint,
 )
 from src.training.scheduler import WarmupCosineScheduler
+from src.training.codebook_schedule import codebook_weights
+from src.training.early_stop import early_stop_step
+from src.training.multitask import composite_val_loss, text_weight_at
+from src.training.param_classify import depth_block_layer_index, is_depth_block
 from src.training.translation_loss import compute_hierarchical_translation_loss
 
 
@@ -453,7 +457,7 @@ def load_config(path: str | None, overrides: dict) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def freeze_depth_internals(model):
+def freeze_depth_internals(model, unfreeze_last_n_blocks: int = 0):
     frozen, kept = 0, 0
     for name, param in model.depth_decoder.named_parameters():
         if any(k in name for k in ("input_projections", "embed_tokens", "lm_heads")):
@@ -463,6 +467,42 @@ def freeze_depth_internals(model):
             param.requires_grad = False
             frozen += param.numel()
     print(f"Depth decoder: frozen {frozen / 1e6:.0f}M, trainable I/O {kept / 1e6:.0f}M")
+    # Phase C3 (opt-in): unfreeze the last N depth transformer blocks for low-LR
+    # adaptation to the TR/HI residual distribution. Done at SETUP (before the FSDP
+    # wrap), so no risky mid-run param-group surgery. The Phase C2 unmask schedule
+    # gates deep-codebook gradients, so these blocks only begin learning once their
+    # codebooks unmask -- the "staged" effect without mutating the optimizer mid-run.
+    # They land in the `depth_blocks` low-LR group (get_param_groups via is_depth_block).
+    if unfreeze_last_n_blocks > 0:
+        # Name-based (NOT module-walk): the TPU smoke showed module-walk over
+        # `.layers` reported 0M, while this named_parameters() enumeration -- the
+        # same one the freeze loop above uses -- correctly sees the 617M of block
+        # params. Find the layer count, then unfreeze the last N layer indices.
+        idxs = {
+            depth_block_layer_index(name)
+            for name, _ in model.depth_decoder.named_parameters()
+        }
+        idxs.discard(None)
+        if not idxs:
+            print("  [depth-unfreeze] WARNING: no depth transformer-block params found; skipping")
+        else:
+            n_layers = max(idxs) + 1
+            n = min(unfreeze_last_n_blocks, n_layers)
+            threshold = n_layers - n  # unfreeze indices [threshold, n_layers)
+            uf = 0
+            for name, param in model.depth_decoder.named_parameters():
+                li = depth_block_layer_index(name)
+                if li is not None and li >= threshold:
+                    param.requires_grad = True
+                    uf += param.numel()
+            # Guard: an enabled unfreeze that matched 0 params is a silent no-op
+            # (the bug the smoke caught) -- fail loud instead.
+            assert uf > 0, (
+                f"depth-unfreeze matched 0 params for last {n}/{n_layers} blocks; "
+                "check depth-decoder naming (param_classify.depth_block_layer_index)"
+            )
+            print(f"  [depth-unfreeze] unfroze last {n}/{n_layers} depth blocks "
+                  f"({uf / 1e6:.0f}M) -> low-LR depth_blocks group")
 
 
 def get_param_groups(model, optim_cfg):
@@ -471,6 +511,9 @@ def get_param_groups(model, optim_cfg):
         "full_ft": {"params": [], "lr": optim_cfg["lr_full_ft"]},
         "projection": {"params": [], "lr": optim_cfg["lr_projection"]},
         "depth": {"params": [], "lr": optim_cfg["lr_depth"]},
+        # Phase C3: unfrozen depth-decoder transformer blocks at a LOW LR
+        # (default lr_depth x 0.1). Empty -> dropped unless lora.depth_unfreeze_blocks>0.
+        "depth_blocks": {"params": [], "lr": optim_cfg.get("lr_depth_blocks", optim_cfg["lr_depth"] * 0.1)},
         "text_embed": {"params": [], "lr": optim_cfg["lr_text_embed"]},
         "model_audio_embed": {"params": [], "lr": optim_cfg.get("lr_model_audio_embed", optim_cfg["lr_audio_embed"])},
     }
@@ -481,6 +524,8 @@ def get_param_groups(model, optim_cfg):
             groups["model_audio_embed"]["params"].append(param)
         elif "projection" in name and "depth" not in name and "input_proj" not in name:
             groups["projection"]["params"].append(param)
+        elif is_depth_block(name):  # Phase C3: depth transformer blocks -> low LR
+            groups["depth_blocks"]["params"].append(param)
         elif "depth_decoder" in name:
             groups["depth"]["params"].append(param)
         elif "text_embed" in name and "depth" not in name:
@@ -726,6 +771,8 @@ def run_validation(
                 audio_weight=loss_cfg["audio_weight"],
                 text_padding_weight=loss_cfg.get("text_padding_weight", 0.01),
                 zero_padding_weight=loss_cfg.get("zero_padding_weight", 0.0),
+                # val stays CLEAN CE (no label smoothing) for a true
+                # generalization metric; smoothing is applied on the train call.
             )
             # First-batch NaN localization (one host sync; diagnostic only).
             # Pinpoints whether the non-finite originates in the backbone
@@ -811,10 +858,19 @@ def run_validation(
     if nf < n:
         print(f"  [val] skipped {n - int(nf)}/{n} non-finite val batches", flush=True)
     inv = 1.0 / nf
+    _vt = (acc_text * inv).item()
+    _va = (acc_audio * inv).item()
     return {
         "val/loss": (acc_loss * inv).item(),
-        "val/text_loss": (acc_text * inv).item(),
-        "val/audio_loss": (acc_audio * inv).item(),
+        "val/text_loss": _vt,
+        "val/audio_loss": _va,
+        # Phase D: composite of the RAW stream losses (audio-heavier) — the metric
+        # for best_by_val + early stopping, so neither stream can be sacrificed.
+        "val/composite": composite_val_loss(
+            _vt, _va,
+            float(loss_cfg.get("composite_text_w", 0.4)),
+            float(loss_cfg.get("composite_audio_w", 0.6)),
+        ),
         "val/cb0_acc": (cc / ct) if ct > 0 else 0.0,
         "val/per_codebook_loss": (per_cb_sum * inv).detach().cpu().tolist(),
         "val/per_codebook_acc": (
@@ -882,7 +938,37 @@ def build_parser():
     p.add_argument("--lora_r", type=int, default=None)
     p.add_argument("--lora_alpha_mult", type=int, default=None,
                    help="lora.alpha = lora_alpha_mult * lora_r")
+    p.add_argument("--lora_dropout", type=float, default=None,
+                   help="lora.dropout (Phase E sweep knob)")
+    # Capacity-sweep knobs (scale phase): structural axes for the v0.3-scale sweep.
+    p.add_argument("--lora_exclude_top", type=int, default=None,
+                   help="lora.lora_exclude_top (# top layers left frozen; sweep knob)")
+    p.add_argument("--use_rslora", type=lambda s: s.lower() in ("1", "true", "yes"),
+                   default=None, help="lora.use_rslora (alpha/sqrt(r) rank-stable scaling)")
+    p.add_argument("--target_modules", type=str, default=None,
+                   help='lora.target_modules as a JSON list or comma/space-separated '
+                        'string (W&B sweep categorical, e.g. \'["q_proj","v_proj"]\')')
     return p
+
+
+def _parse_target_modules(raw):
+    """Parse a --target_modules sweep value into a list of module-name strings.
+
+    W&B serializes a list categorical as a JSON string ('["q_proj","v_proj"]') or
+    it can arrive comma/space-separated; accept all forms. A single bare name
+    returns a one-element list.
+    """
+    if isinstance(raw, (list, tuple)):
+        return [str(x) for x in raw]
+    s = str(raw).strip()
+    try:
+        val = json.loads(s)
+        if isinstance(val, list):
+            return [str(x) for x in val]
+    except (ValueError, TypeError):
+        pass
+    cleaned = s.strip("[]").replace('"', "").replace("'", "").replace(",", " ")
+    return [tok for tok in cleaned.split() if tok]
 
 
 def main():
@@ -891,9 +977,11 @@ def main():
         k: v
         for k, v in vars(args).items()
         # lora_r/lora_alpha_mult map to lora.r/lora.alpha (name mismatch) and
-        # `sweep` is a control flag -- all handled explicitly below.
+        # `sweep` is a control flag -- all handled explicitly below. The capacity
+        # knobs (lora_exclude_top/use_rslora/target_modules) also map under `lora`.
         if k not in ("config", "dataset_mode", "data_dir", "resume",
-                     "sweep", "lora_r", "lora_alpha_mult")
+                     "sweep", "lora_r", "lora_alpha_mult", "lora_dropout",
+                     "lora_exclude_top", "use_rslora", "target_modules")
     }
     cfg = load_config(args.config, overrides)
 
@@ -906,6 +994,15 @@ def main():
     if args.lora_alpha_mult is not None:
         _r = cfg.get("lora", {}).get("r", 16)
         cfg.setdefault("lora", {})["alpha"] = args.lora_alpha_mult * _r
+    if args.lora_dropout is not None:
+        cfg.setdefault("lora", {})["dropout"] = args.lora_dropout
+    # Capacity-sweep structural knobs (scale phase).
+    if args.lora_exclude_top is not None:
+        cfg.setdefault("lora", {})["lora_exclude_top"] = args.lora_exclude_top
+    if args.use_rslora is not None:
+        cfg.setdefault("lora", {})["use_rslora"] = args.use_rslora
+    if args.target_modules is not None:
+        cfg.setdefault("lora", {})["target_modules"] = _parse_target_modules(args.target_modules)
     if args.sweep:
         print(f"[sweep] overrides -> lr_lora={cfg['optim'].get('lr_lora')} "
               f"lr_depth={cfg['optim'].get('lr_depth')} "
@@ -978,8 +1075,12 @@ def main():
         target_modules=_lora_cfg.get("target_modules", ["q_proj", "v_proj", "embed_tokens"]),
         num_full_ft_layers=_lora_cfg.get("num_full_ft_layers", 0),
         lora_exclude_top=_lora_cfg.get("lora_exclude_top", 2),
+        lora_dropout=_lora_cfg.get("dropout", 0.0),
+        use_rslora=bool(_lora_cfg.get("use_rslora", False)),
     )
-    freeze_depth_internals(model)
+    freeze_depth_internals(
+        model, unfreeze_last_n_blocks=int(_lora_cfg.get("depth_unfreeze_blocks", 0))
+    )
     for p in model.projection.parameters():
         p.requires_grad = True
 
@@ -988,16 +1089,27 @@ def main():
     # model is broken. We load weights into the unwrapped model, then FSDP wraps
     # the correctly-initialized params. Optimizer state is NOT restored (Adam
     # momentum restarts) but model weights are correct.
-    from src.training.checkpointing import find_latest_checkpoint, load_checkpoint
+    from src.training.checkpointing import (
+        find_latest_checkpoint,
+        load_checkpoint,
+        read_checkpoint_metadata,
+    )
 
     start_step = 0
+    resume_wandb_run_id = None
     resume_dir = args.resume
     if resume_dir == "auto":
         resume_dir = find_latest_checkpoint(cfg["logging"]["save_dir"])
     if resume_dir:
         start_step = load_checkpoint(model, None, None, resume_dir)
+        # Recover the original W&B run id so a preempted run continues the SAME
+        # dashboard run on restart instead of fragmenting into a new run.
+        resume_wandb_run_id = read_checkpoint_metadata(resume_dir).get("wandb_run_id")
         if is_main:
-            print(f"Loaded model weights from {resume_dir} (step {start_step})")
+            _msg = f"Loaded model weights from {resume_dir} (step {start_step})"
+            if resume_wandb_run_id:
+                _msg += f"; will resume W&B run {resume_wandb_run_id}"
+            print(_msg)
 
     model = model.to(device)
 
@@ -1067,6 +1179,17 @@ def main():
         batch_pad_to=batch_pad_to,
         expected_num_codebooks=expected_codebooks,
     )
+    # Phase E: a SEPARATE train collator carries SpecAugment (input-stream masking);
+    # the shared `collator` above stays clean for validation. No-op when disabled.
+    _sa_cfg = cfg.get("spec_augment")
+    train_collator = InterleavedCollator(
+        pad_to=pad_to,
+        batch_pad_to=batch_pad_to,
+        expected_num_codebooks=expected_codebooks,
+        spec_augment=_sa_cfg,
+    ) if (_sa_cfg and _sa_cfg.get("enabled")) else collator
+    if _sa_cfg and _sa_cfg.get("enabled") and is_main:
+        print(f"  [spec-augment] ON (train only): {_sa_cfg}", flush=True)
     if args.dataset_mode == "streaming":
         if not cfg["data"]["train_split"]:
             raise ValueError("train_split required in streaming mode")
@@ -1162,7 +1285,7 @@ def main():
         train_loader = torch.utils.data.DataLoader(
             train_ds,
             batch_sampler=bucket_batch_sampler,
-            collate_fn=collator,
+            collate_fn=train_collator,
             num_workers=num_workers,
             pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
             persistent_workers=use_persistent,
@@ -1174,7 +1297,7 @@ def main():
             batch_size=cfg["train"]["batch_size"],
             shuffle=(train_sampler is None),
             sampler=train_sampler,
-            collate_fn=collator,
+            collate_fn=train_collator,
             num_workers=num_workers,
             pin_memory=cfg["data"]["pin_memory"] and not is_tpu,
             persistent_workers=use_persistent,
@@ -1264,6 +1387,9 @@ def main():
     # rank_0..rank_3. Pattern: docs.wandb.ai/guides/track/log/
     # distributed-training#track-all-processes-to-a-single-run
     use_wandb = cfg["logging"]["use_wandb"]
+    # Shared W&B run id (set by the multi-host rendezvous below on TPU). Initialised
+    # here so it is always defined and can namespace the sweep checkpoint dir.
+    run_id = None
     if use_wandb:
         import platform
         import re
@@ -1379,10 +1505,21 @@ def main():
                 )
                 use_wandb = False
         elif is_main:
-            # Primary host: create the run, publish run-id.
+            # Primary host: create (or RESUME) the run, publish run-id. On a spot
+            # restart resume_wandb_run_id continues the same dashboard run.
             wandb.init(
                 project=cfg["logging"]["wandb_project"],
                 name=cfg["logging"]["wandb_run_name"],
+                # Prefer a resumed id; else honor WANDB_RUN_ID (the sweep coordinator
+                # pre-generates it so it can read this trial's metric back + so the
+                # checkpoint dir is namespaced by the same id). else wandb generates.
+                id=resume_wandb_run_id or os.environ.get("WANDB_RUN_ID") or None,
+                # resume="allow" whenever an id is pinned (resumed OR coordinator's
+                # deterministic WANDB_RUN_ID) so a RELAUNCH of a killed sweep trial
+                # re-attaches to the same run instead of erroring on a duplicate id.
+                resume=("allow"
+                        if (resume_wandb_run_id or os.environ.get("WANDB_RUN_ID"))
+                        else None),
                 config=_run_config,
                 tags=_wandb_tags,
                 notes=_wandb_notes,
@@ -1403,6 +1540,9 @@ def main():
             wandb.define_metric("train/*", step_metric="global_step")
             wandb.define_metric("perf/*", step_metric="global_step")
             wandb.define_metric("val/*", step_metric="global_step")
+            # Phase E sweep: optimise on the BEST (min) composite, not the last
+            # value, so early-stopped trials are compared at their best point.
+            wandb.define_metric("val/composite", summary="min", step_metric="global_step")
             wandb.define_metric("audio/*", step_metric="global_step")
             wandb.define_metric("mem/*", step_metric="global_step")
             if is_tpu:
@@ -1442,6 +1582,20 @@ def main():
     # stage to a temp dir and gsutil-upload when the dest is gs://. Only
     # create local destinations here.
     save_dir = str(cfg["logging"]["save_dir"])
+    # Sweep trials share one save_dir from the proxy config; namespace it by the
+    # (rendezvous-shared) W&B run id so every trial keeps ALL its checkpoints in an
+    # isolated dir with no step-filename collisions across the sequential sweep. All
+    # hosts share one run id via the GCS rendezvous, so the path is identical on
+    # every host of the multi-host slice.
+    # Capture the primary's W&B run id (also shared to workers via the rendezvous):
+    # used to namespace sweep checkpoint dirs AND saved into each checkpoint so a
+    # preempted run can resume the same W&B run (see resume block above).
+    if run_id is None and use_wandb and getattr(wandb, "run", None) is not None:
+        run_id = wandb.run.id
+    if args.sweep and run_id:
+        save_dir = save_dir.rstrip("/") + "/" + str(run_id)
+        if is_main:
+            print(f"[sweep] namespaced save_dir -> {save_dir}", flush=True)
     _save_is_gcs = save_dir.startswith("gs://")
     if not _save_is_gcs:
         Path(save_dir).mkdir(parents=True, exist_ok=True)
@@ -1462,6 +1616,15 @@ def main():
     t0 = time.time()
     t_last = t0
     best_val = float("inf")
+    # Phase A early stopping: stop if val/loss hasn't improved by > min_delta for
+    # `early_stop_patience` consecutive val cycles. patience=0 disables it.
+    # NOTE: best_by_val is saved on every improvement regardless of patience, so
+    # stopping NEVER degrades the released model -- it only halts the run (and a
+    # longer patience can catch a late second-descent from the cosine LR decay).
+    early_stop_patience = int(cfg["train"].get("early_stop_patience", 0))
+    early_stop_min_delta = float(cfg["train"].get("early_stop_min_delta", 0.0))
+    _patience_left = early_stop_patience
+    _early_stop = False
 
     grad_accum = cfg["train"]["grad_accum"]
     # XLA traces all grad-accum micro-batches into one macro-step graph.
@@ -1496,6 +1659,54 @@ def main():
     audio_w = cfg["loss"]["audio_weight"]
     text_pad_w = cfg["loss"].get("text_padding_weight", 0.01)
     zero_pad_w = cfg["loss"].get("zero_padding_weight", 0.0)
+    # Phase A: label smoothing on the TRAIN loss only (val stays clean CE).
+    label_smooth = cfg["loss"].get("label_smoothing", 0.0)
+    # Phase D: text_weight curriculum (anneal start->end over the first frac of
+    # the run). Quantised -> only a few distinct text_weight values occur, so XLA
+    # recompiles a bounded number of times (a smooth per-step ramp would recompile
+    # every step). Disabled (-> static text_w) when frac<=0 or start==end.
+    _tw_start = float(cfg["loss"].get("text_weight_start", text_w))
+    _tw_end = float(cfg["loss"].get("text_weight_end", text_w))
+    _tw_frac = float(cfg["loss"].get("text_weight_curriculum_frac", 0.0))
+    _tw_quantum = float(cfg["loss"].get("text_weight_quantum", 0.05))
+    _tw_enabled = _tw_frac > 0 and _tw_start != _tw_end
+
+    def _text_weight_for(s: int) -> float:
+        """Train-loss text_weight for step ``s`` (curriculum, or static)."""
+        if not _tw_enabled:
+            return text_w
+        return text_weight_at(s, max_steps, _tw_start, _tw_end, _tw_frac, _tw_quantum)
+    if _tw_enabled:
+        print(
+            f"  [text-curriculum] text_weight {_tw_start}->{_tw_end} over first "
+            f"{_tw_frac:.0%} of {max_steps} steps (quantum {_tw_quantum})",
+            flush=True,
+        )
+    # Phase C: per-codebook loss weighting + progressive coarse->fine unmasking.
+    # OFF unless configured (cb_weights=None -> uniform per-codebook mean = the v2
+    # behaviour). When on, the [CB] weight vector is computed per step but CACHED by
+    # value: identical vectors reuse one device tensor (one XLA graph), so only the
+    # handful of distinct vectors during the unmask ramp recompile (one-time).
+    _cb_multipliers = cfg["loss"].get("per_codebook_multipliers", None)
+    _cb_unmask_frac = float(cfg["loss"].get("progressive_unmask_fraction", 0.0))
+    _cb_unmask_k0 = int(cfg["loss"].get("unmask_k0", 1))
+    _cb_enabled = _cb_multipliers is not None or _cb_unmask_frac > 0
+    _cb_cache: dict[tuple, "torch.Tensor"] = {}
+
+    def _cb_weights_for(s: int):
+        """Device [CB] weight tensor for step ``s`` (cached by value), or None."""
+        if not _cb_enabled:
+            return None
+        key = tuple(
+            codebook_weights(
+                s, max_steps, num_codebooks, _cb_multipliers, _cb_unmask_frac, _cb_unmask_k0
+            )
+        )
+        t = _cb_cache.get(key)
+        if t is None:
+            t = torch.tensor(key, device=device, dtype=torch.float32)
+            _cb_cache[key] = t
+        return t
     perf_cfg = cfg.get("perf", {})
     perf_enabled = bool(perf_cfg.get("enabled", False))
     perf_warmup_skip_steps = int(perf_cfg.get("warmup_skip_steps", 50))
@@ -1708,10 +1919,12 @@ def main():
                             audio_targets,
                             mask,
                             loss_mask,
-                            text_weight=text_w,
+                            text_weight=_text_weight_for(step),  # Phase D curriculum
                             audio_weight=audio_w,
                             text_padding_weight=text_pad_w,
                             zero_padding_weight=zero_pad_w,
+                            label_smoothing=label_smooth,  # Phase A: train-only regularizer
+                            cb_weights=_cb_weights_for(step),  # Phase C (None if disabled)
                         )
                 loss = losses["loss"] / grad_accum
                 with trace_ctx("backward"):
@@ -2241,7 +2454,11 @@ def main():
             # failed/empty val must never crash the training run.
             val_ok = bool(val) and "val/loss" in val
             if val_ok and is_main:
-                print(f"  val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc'] * 100:.1f}%")
+                print(
+                    f"  val/composite={val.get('val/composite', float('nan')):.4f} "
+                    f"(text={val['val/text_loss']:.4f} audio={val['val/audio_loss']:.4f}) "
+                    f"val/loss={val['val/loss']:.4f} cb0_acc={val['val/cb0_acc'] * 100:.1f}%"
+                )
                 _cba = val.get("val/per_codebook_acc")
                 if _cba:
                     print(
@@ -2260,8 +2477,30 @@ def main():
                     log[f"val/per_codebook_acc_{i}"] = v
                 log["global_step"] = step
                 wandb.log(log)
-            if val_ok and val["val/loss"] < best_val:
-                best_val = val["val/loss"]
+            _improved = False
+            if val_ok:
+                # Phase D: select/early-stop on the composite (audio-heavier) metric;
+                # fall back to raw val/loss if composite is absent (older configs).
+                _stop_metric = val.get("val/composite", val.get("val/loss"))
+                _dec = early_stop_step(
+                    _stop_metric, best_val, _patience_left,
+                    early_stop_patience, early_stop_min_delta,
+                )
+                _improved, best_val, _patience_left = (
+                    _dec.improved, _dec.best_val, _dec.patience_left,
+                )
+                if _dec.should_stop:
+                    _early_stop = True
+                if not _improved and early_stop_patience > 0 and is_main:
+                    _tag = "STOPPING" if _dec.should_stop else (
+                        f"patience {max(_patience_left, 0)}/{early_stop_patience}"
+                    )
+                    print(
+                        f"  [early-stop] no val improvement (>{early_stop_min_delta}); "
+                        f"{_tag} (best {best_val:.4f})",
+                        flush=True,
+                    )
+            if _improved:
                 # Validation only runs on GPU (not is_tpu), where save_dir is
                 # local; keep best_by_val as a local Path.
                 best_dir = Path(save_dir) / "best_by_val"
@@ -2277,7 +2516,8 @@ def main():
                     scheduler,
                     step,
                     str(best_dir),
-                    extra_state={"best_val_loss": best_val, "config": cfg},
+                    extra_state={"best_val_loss": best_val, "config": cfg,
+                                 "wandb_run_id": run_id},
                     is_main=is_main,
                 )
                 if is_main:
@@ -2305,7 +2545,7 @@ def main():
                 scheduler,
                 step,
                 str(d),
-                extra_state={"config": cfg},
+                extra_state={"config": cfg, "wandb_run_id": run_id},
                 is_main=is_main,
                 keep_local_dir=keep_local_dir,
             )
@@ -2320,6 +2560,9 @@ def main():
                     except Exception as e:
                         print(f"  hub push failed: {e}")
             backend.barrier()
+
+        if _early_stop:
+            break  # Phase A early stopping -> fall through to the final save below
 
     # ---- final save (multi-host SPMD-safe; see patch 16/17)
     # patch 18b: respect save_every=0 escape hatch -- skip the final save
@@ -2338,7 +2581,7 @@ def main():
             scheduler,
             step,
             str(d),
-            extra_state={"config": cfg, "final": True},
+            extra_state={"config": cfg, "final": True, "wandb_run_id": run_id},
             is_main=is_main,
             keep_local_dir=keep_local_dir,
         )

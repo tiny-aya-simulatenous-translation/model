@@ -139,3 +139,36 @@ python scripts/promote_sweep_winner.py \
 # then launch the 15k release run on the v6e-8
 bash scripts/tpu/launch_release.sh configs/tpu/stage2_tpu_v6e_v2.yaml
 ```
+
+## v0.3 sweep (parallel, on the composite metric)
+
+`sweeps/sweep_stage2_v3.yaml` searches the **regularization** knobs (`lr_lora`,
+`lora_r∈{8,16,32}`, `lora_dropout`, `weight_decay`) with all v0.3 levers (A/C/D)
+ON, optimising **`val/composite`** (logged `summary="min"`). It points at the
+single-host proxy `configs/tpu/stage2_tpu_v6e_v3_proxy.yaml`.
+
+Each trial is independent, so run it **N-wide** rather than on a bigger mesh
+(LoRA generalises worse past batch ~128, so a 64-chip SPMD trial is the wrong
+tool — see the brainstorm in the PR):
+
+```bash
+# 1. create the sweep (workstation)
+wandb sweep sweeps/sweep_stage2_v3.yaml          # -> ENTITY/PROJECT/SWEEP_ID
+
+# 2a. v6e-64: one agent per host (8 parallel trials). VALIDATE isolation --
+#     the first trial must log `[tpu_backend][post-wrap] global=8` (NOT 64).
+SWEEP_ID=ENTITY/PROJECT/SWEEP_ID \
+NODE_ID=tinyaya-stage2-spot-v6e64-eu ZONE=europe-west4-a \
+    bash scripts/tpu/launch_sweep.sh
+
+# 2b. ROBUST fallback: N separate v6e-8 spot slices, one agent each (WORKER=0).
+```
+
+Promote the winner into the **production v3** config (default `--metric
+val/composite`), then run the single 15k v0.3 run on a **v6e-8**:
+
+```bash
+python scripts/promote_sweep_winner.py \
+    --sweep ENTITY/PROJECT/SWEEP_ID \
+    --config configs/tpu/stage2_tpu_v6e_v3.yaml
+```

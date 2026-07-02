@@ -16,9 +16,12 @@ on host CPU and the DataLoader hands the result to the device just like
 on GPU.
 """
 
+import random
 from collections.abc import Sequence
 
 import torch
+
+from src.data.spec_augment import apply_spec_augment
 
 # Must match TinyAyaBackbone special tokens
 ZERO_PADDING = 262146
@@ -38,12 +41,17 @@ class InterleavedCollator:
         pad_to: int | Sequence[int] | None = None,
         batch_pad_to: int | None = None,
         expected_num_codebooks: int | None = None,
+        spec_augment: dict | None = None,
     ):
         self.audio_pad_id = audio_pad_id
         self.text_pad_id = text_pad_id
         self.pad_to = tuple(pad_to) if isinstance(pad_to, Sequence) else pad_to
         self.batch_pad_to = batch_pad_to
         self.expected_num_codebooks = expected_num_codebooks
+        # Phase E: SpecAugment-on-codes (train collator only; default off). When
+        # enabled, masks the INPUT user-audio stream (never targets/val).
+        self.spec_augment = spec_augment if (spec_augment and spec_augment.get("enabled")) else None
+        self._sa_rng = random.Random() if self.spec_augment else None
 
     def __call__(self, batch: list[dict]) -> dict[str, torch.Tensor]:
         if not batch:
@@ -126,5 +134,14 @@ class InterleavedCollator:
                     T = min(item[key].shape[1], max_len)
                     stream[i, :, :T] = item[key][:num_codebooks, :T]
                 result[key] = stream
+
+        # Phase E: SpecAugment masks the INPUT (user) stream only, capped to each
+        # sample's real frame count so padding stays SILENCE. Off unless enabled
+        # on this collator (train loader).
+        if self.spec_augment is not None and "user_audio_codes" in result:
+            apply_spec_augment(
+                result["user_audio_codes"], self.spec_augment, self._sa_rng,
+                silence_token=SILENCE_TOKEN, lengths=lengths,
+            )
 
         return result

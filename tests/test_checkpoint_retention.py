@@ -82,6 +82,47 @@ def test_bounded_keeps_last_n_plus_best(tmp_path):
     assert (tmp_path / "best_by_val").exists()  # best survives pruning
 
 
+# ---- B1 resume: latest-checkpoint discovery + metadata reader ----
+
+def test_find_latest_checkpoint_picks_highest_step_not_best(tmp_path):
+    _make_ckpt_tree(tmp_path, [500, 1000, 1500], with_best=True)
+    latest = ckpt.find_latest_checkpoint(str(tmp_path))
+    assert latest is not None
+    assert latest.rstrip("/").endswith("step_001500")  # not best_by_val
+
+
+def test_get_checkpoint_dirs_excludes_best_and_sorts(tmp_path):
+    _make_ckpt_tree(tmp_path, [2000, 500, 1000], with_best=True)
+    dirs = ckpt.get_checkpoint_dirs(str(tmp_path))
+    names = [d.rstrip("/").rsplit("/", 1)[-1] for d in dirs]
+    assert names == ["step_000500", "step_001000", "step_002000"]  # sorted, no best
+
+
+def test_get_checkpoint_dirs_empty_when_absent(tmp_path):
+    assert ckpt.get_checkpoint_dirs(str(tmp_path / "nope")) == []
+
+
+def test_step_of_parses_and_defaults(tmp_path):
+    assert ckpt._step_of("gs://b/run/step_000750") == 750
+    assert ckpt._step_of("/x/step_000750/") == 750
+    assert ckpt._step_of("/x/best_by_val") == -1
+
+
+def test_read_checkpoint_metadata_local(tmp_path):
+    d = tmp_path / "step_000500"
+    d.mkdir()
+    (d / "metadata.json").write_text('{"step": 500, "wandb_run_id": "abc123"}')
+    meta = ckpt.read_checkpoint_metadata(str(d))
+    assert meta.get("wandb_run_id") == "abc123"
+    assert meta.get("step") == 500
+
+
+def test_read_checkpoint_metadata_missing_returns_empty(tmp_path):
+    d = tmp_path / "empty"
+    d.mkdir()
+    assert ckpt.read_checkpoint_metadata(str(d)) == {}
+
+
 if __name__ == "__main__":
     import sys
     import tempfile
